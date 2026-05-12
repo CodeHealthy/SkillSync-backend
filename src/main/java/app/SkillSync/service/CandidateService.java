@@ -1,23 +1,38 @@
 package app.SkillSync.service;
 
+import app.SkillSync.dto.CreateCandidateRequest;
+import app.SkillSync.dto.SubmitTestResultRequest;
 import app.SkillSync.model.Candidate;
 import app.SkillSync.model.TestResult;
 import app.SkillSync.repository.CandidateRepository;
-import app.SkillSync.repository.TestResultRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class CandidateService {
 
-    @Autowired
-    private CandidateRepository candidateRepository;
-    @Autowired
-    private TestResultRepository testResultRepository;
+    private final CandidateRepository candidateRepository;
 
-    public Candidate saveCandidate(Candidate candidate) {
+    public CandidateService(CandidateRepository candidateRepository) {
+        this.candidateRepository = candidateRepository;
+    }
+
+    public Candidate createCandidate(CreateCandidateRequest request) {
+        String normalizedEmail = request.getEmail().trim().toLowerCase();
+
+        if (candidateRepository.existsByEmail(normalizedEmail)) {
+            throw new IllegalArgumentException("Candidate email already exists");
+        }
+
+        Candidate candidate = new Candidate();
+        candidate.setName(request.getName().trim());
+        candidate.setEmail(normalizedEmail);
+        candidate.setTestResults(new ArrayList<>());
+        candidate.setCreatedAt(Instant.now());
+
         return candidateRepository.save(candidate);
     }
 
@@ -25,21 +40,43 @@ public class CandidateService {
         return candidateRepository.findAll();
     }
 
-    public List<Candidate> getCandidatesByName(String name) {
-        return candidateRepository.findByName(name);
+    public List<Candidate> searchCandidatesByName(String name) {
+        return candidateRepository.findByNameContainingIgnoreCase(name);
     }
 
-    // Add test result to candidate
-    public TestResult saveTestResult(String candidateId, TestResult testResult) {
-        Candidate candidate = candidateRepository.findById(candidateId).orElseThrow(() -> new RuntimeException("Candidate not found"));
+    public Candidate getCandidateById(String candidateId) {
+        return candidateRepository.findById(candidateId)
+                .orElseThrow(() -> new IllegalArgumentException("Candidate not found"));
+    }
+
+    public TestResult submitTestResult(String candidateId, SubmitTestResultRequest request) {
+        Candidate candidate = getCandidateById(candidateId);
+
+        if (candidate.getTestResults() == null) {
+            candidate.setTestResults(new ArrayList<>());
+        }
+
+        TestResult testResult = new TestResult();
+        testResult.setTestName(request.getTestName().trim());
+        testResult.setScore(request.getScore());
+        testResult.setStatus(request.getStatus().trim());
+        testResult.setAnswers(request.getAnswers());
+        testResult.setSubmissionTime(Instant.now());
+
         candidate.getTestResults().add(testResult);
+
         candidateRepository.save(candidate);
-        return testResultRepository.save(testResult);
+
+        return testResult;
     }
 
-    // Get all test results for a candidate
     public List<TestResult> getTestResultsByCandidateId(String candidateId) {
-        Candidate candidate = candidateRepository.findById(candidateId).orElseThrow(() -> new RuntimeException("Candidate not found"));
+        Candidate candidate = getCandidateById(candidateId);
+
+        if (candidate.getTestResults() == null) {
+            return List.of();
+        }
+
         return candidate.getTestResults();
     }
 }

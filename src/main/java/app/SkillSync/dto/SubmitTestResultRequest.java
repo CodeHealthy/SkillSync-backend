@@ -1,24 +1,24 @@
-package app.SkillSync.model;
+package app.SkillSync.dto;
 
-import java.time.Instant;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 
-public class TestResult {
+public class SubmitTestResultRequest {
 
+    @NotBlank(message = "Test name is required")
     private String testName;
+
+    @Min(value = 0, message = "Score cannot be below 0")
+    @Max(value = 100, message = "Score cannot be above 100")
     private int score;
+
+    @NotBlank(message = "Status is required")
     private String status;
+
     private String answers;
-    private Instant submissionTime;
 
-    public TestResult() {
-    }
-
-    public TestResult(String testName, int score, String status, String answers, Instant submissionTime) {
-        this.testName = testName;
-        this.score = score;
-        this.status = status;
-        this.answers = answers;
-        this.submissionTime = submissionTime;
+    public SubmitTestResultRequest() {
     }
 
     public String getTestName() {
@@ -37,10 +37,6 @@ public class TestResult {
         return answers;
     }
 
-    public Instant getSubmissionTime() {
-        return submissionTime;
-    }
-
     public void setTestName(String testName) {
         this.testName = testName;
     }
@@ -55,9 +51,5 @@ public class TestResult {
 
     public void setAnswers(String answers) {
         this.answers = answers;
-    }
-
-    public void setSubmissionTime(Instant submissionTime) {
-        this.submissionTime = submissionTime;
     }
 }

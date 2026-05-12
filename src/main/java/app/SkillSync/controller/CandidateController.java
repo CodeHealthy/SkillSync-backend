@@ -1,10 +1,14 @@
 package app.SkillSync.controller;
 
+import app.SkillSync.dto.CreateCandidateRequest;
+import app.SkillSync.dto.SubmitTestResultRequest;
 import app.SkillSync.model.Candidate;
 import app.SkillSync.model.TestResult;
 import app.SkillSync.service.CandidateService;
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -13,38 +17,58 @@ import java.util.List;
 @RequestMapping("/api/candidates")
 public class CandidateController {
 
-    @Autowired
-    private CandidateService candidateService;
+    private final CandidateService candidateService;
 
-    @PostMapping
-    public ResponseEntity<Candidate> createCandidate(@RequestBody Candidate candidate) {
-        Candidate createdCandidate = candidateService.saveCandidate(candidate);
-        return ResponseEntity.status(201).body(createdCandidate);
+    public CandidateController(CandidateService candidateService) {
+        this.candidateService = candidateService;
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping
+    public ResponseEntity<Candidate> createCandidate(
+            @Valid @RequestBody CreateCandidateRequest request
+    ) {
+        Candidate candidate = candidateService.createCandidate(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(candidate);
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
     @GetMapping
     public ResponseEntity<List<Candidate>> getAllCandidates() {
-        List<Candidate> candidates = candidateService.getAllCandidates();
-        return ResponseEntity.ok(candidates);
+        return ResponseEntity.ok(candidateService.getAllCandidates());
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping("/{candidateId}")
+    public ResponseEntity<Candidate> getCandidateById(
+            @PathVariable String candidateId
+    ) {
+        return ResponseEntity.ok(candidateService.getCandidateById(candidateId));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
     @GetMapping("/search")
-    public ResponseEntity<List<Candidate>> getCandidatesByName(@RequestParam String name) {
-        List<Candidate> candidates = candidateService.getCandidatesByName(name);
-        return ResponseEntity.ok(candidates);
+    public ResponseEntity<List<Candidate>> searchCandidates(
+            @RequestParam String name
+    ) {
+        return ResponseEntity.ok(candidateService.searchCandidatesByName(name));
     }
 
-    // Endpoint to save test result for a candidate
+    @PreAuthorize("hasAnyRole('ADMIN', 'CANDIDATE')")
     @PostMapping("/{candidateId}/test-results")
-    public ResponseEntity<TestResult> createTestResult(@PathVariable String candidateId, @RequestBody TestResult testResult) {
-        TestResult createdTestResult = candidateService.saveTestResult(candidateId, testResult);
-        return ResponseEntity.status(201).body(createdTestResult);
+    public ResponseEntity<TestResult> submitTestResult(
+            @PathVariable String candidateId,
+            @Valid @RequestBody SubmitTestResultRequest request
+    ) {
+        TestResult testResult = candidateService.submitTestResult(candidateId, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(testResult);
     }
 
-    // Endpoint to get test results for a candidate
+    @PreAuthorize("hasRole('ADMIN')")
     @GetMapping("/{candidateId}/test-results")
-    public ResponseEntity<List<TestResult>> getTestResults(@PathVariable String candidateId) {
-        List<TestResult> testResults = candidateService.getTestResultsByCandidateId(candidateId);
-        return ResponseEntity.ok(testResults);
+    public ResponseEntity<List<TestResult>> getTestResults(
+            @PathVariable String candidateId
+    ) {
+        return ResponseEntity.ok(candidateService.getTestResultsByCandidateId(candidateId));
     }
 }

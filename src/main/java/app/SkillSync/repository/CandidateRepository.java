@@ -6,5 +6,8 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import java.util.List;
 
 public interface CandidateRepository extends MongoRepository<Candidate, String> {
-    List<Candidate> findByName(String name);
+
+    List<Candidate> findByNameContainingIgnoreCase(String name);
+
+    boolean existsByEmail(String email);
 }
