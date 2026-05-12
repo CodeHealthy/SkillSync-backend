@@ -3,6 +3,7 @@ package app.SkillSync.service;
 import app.SkillSync.dto.AssignAssessmentRequest;
 import app.SkillSync.dto.CreateAssessmentRequest;
 import app.SkillSync.dto.SubmitAssignmentRequest;
+import app.SkillSync.dto.GradeAssignmentRequest;
 import app.SkillSync.model.*;
 import app.SkillSync.repository.AssessmentAssignmentRepository;
 import app.SkillSync.repository.AssessmentRepository;
@@ -108,6 +109,23 @@ public class AssessmentService {
         assignment.setSubmittedAnswer(request.getSubmittedAnswer().trim());
         assignment.setStatus(AssignmentStatus.SUBMITTED);
         assignment.setSubmittedAt(Instant.now());
+
+        return assignmentRepository.save(assignment);
+    }
+    public AssessmentAssignment gradeAssignment(
+            String assignmentId,
+            GradeAssignmentRequest request
+    ) {
+        AssessmentAssignment assignment = assignmentRepository.findById(assignmentId)
+                .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
+
+        if (assignment.getStatus() == AssignmentStatus.ASSIGNED) {
+            throw new IllegalArgumentException("Assignment has not been submitted yet");
+        }
+
+        assignment.setScore(request.getScore());
+        assignment.setFeedback(request.getFeedback());
+        assignment.setStatus(AssignmentStatus.GRADED);
 
         return assignmentRepository.save(assignment);
     }

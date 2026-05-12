@@ -3,6 +3,7 @@ package app.SkillSync.controller;
 import app.SkillSync.dto.AssignAssessmentRequest;
 import app.SkillSync.dto.CreateAssessmentRequest;
 import app.SkillSync.dto.SubmitAssignmentRequest;
+import app.SkillSync.dto.GradeAssignmentRequest;
 import app.SkillSync.model.Assessment;
 import app.SkillSync.model.AssessmentAssignment;
 import app.SkillSync.service.AssessmentService;
@@ -76,6 +77,20 @@ public class AssessmentController {
         AssessmentAssignment assignment = assessmentService.submitAssignment(
                 assignmentId,
                 loggedInEmail,
+                request
+        );
+
+        return ResponseEntity.ok(assignment);
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @PatchMapping("/assignments/{assignmentId}/grade")
+    public ResponseEntity<AssessmentAssignment> gradeAssignment(
+            @PathVariable String assignmentId,
+            @Valid @RequestBody GradeAssignmentRequest request
+    ) {
+        AssessmentAssignment assignment = assessmentService.gradeAssignment(
+                assignmentId,
                 request
         );
 
