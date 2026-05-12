@@ -13,6 +13,12 @@ public class AssessmentAssignment {
 
     private String assessmentId;
     private String assessmentTitle;
+    private AssessmentType assessmentType;
+    private ProgrammingLanguage language;
+
+    private String prompt;
+    private String starterCode;
+    private String expectedOutput;
 
     private String candidateId;
     private String candidateName;
@@ -21,11 +27,18 @@ public class AssessmentAssignment {
     private AssignmentStatus status;
 
     private String submittedAnswer;
+    private String submittedCode;
+
+    private String executionStatus;
+    private String actualOutput;
+    private String executionError;
+
     private Integer score;
     private String feedback;
 
     private Instant assignedAt;
     private Instant submittedAt;
+    private Instant gradedAt;
 
     public AssessmentAssignment() {
     }
@@ -40,6 +53,26 @@ public class AssessmentAssignment {
 
     public String getAssessmentTitle() {
         return assessmentTitle;
+    }
+
+    public AssessmentType getAssessmentType() {
+        return assessmentType;
+    }
+
+    public ProgrammingLanguage getLanguage() {
+        return language;
+    }
+
+    public String getPrompt() {
+        return prompt;
+    }
+
+    public String getStarterCode() {
+        return starterCode;
+    }
+
+    public String getExpectedOutput() {
+        return expectedOutput;
     }
 
     public String getCandidateId() {
@@ -62,6 +95,22 @@ public class AssessmentAssignment {
         return submittedAnswer;
     }
 
+    public String getSubmittedCode() {
+        return submittedCode;
+    }
+
+    public String getExecutionStatus() {
+        return executionStatus;
+    }
+
+    public String getActualOutput() {
+        return actualOutput;
+    }
+
+    public String getExecutionError() {
+        return executionError;
+    }
+
     public Integer getScore() {
         return score;
     }
@@ -78,6 +127,10 @@ public class AssessmentAssignment {
         return submittedAt;
     }
 
+    public Instant getGradedAt() {
+        return gradedAt;
+    }
+
     public void setId(String id) {
         this.id = id;
     }
@@ -88,6 +141,26 @@ public class AssessmentAssignment {
 
     public void setAssessmentTitle(String assessmentTitle) {
         this.assessmentTitle = assessmentTitle;
+    }
+
+    public void setAssessmentType(AssessmentType assessmentType) {
+        this.assessmentType = assessmentType;
+    }
+
+    public void setLanguage(ProgrammingLanguage language) {
+        this.language = language;
+    }
+
+    public void setPrompt(String prompt) {
+        this.prompt = prompt;
+    }
+
+    public void setStarterCode(String starterCode) {
+        this.starterCode = starterCode;
+    }
+
+    public void setExpectedOutput(String expectedOutput) {
+        this.expectedOutput = expectedOutput;
     }
 
     public void setCandidateId(String candidateId) {
@@ -110,6 +183,22 @@ public class AssessmentAssignment {
         this.submittedAnswer = submittedAnswer;
     }
 
+    public void setSubmittedCode(String submittedCode) {
+        this.submittedCode = submittedCode;
+    }
+
+    public void setExecutionStatus(String executionStatus) {
+        this.executionStatus = executionStatus;
+    }
+
+    public void setActualOutput(String actualOutput) {
+        this.actualOutput = actualOutput;
+    }
+
+    public void setExecutionError(String executionError) {
+        this.executionError = executionError;
+    }
+
     public void setScore(Integer score) {
         this.score = score;
     }
@@ -124,5 +213,9 @@ public class AssessmentAssignment {
 
     public void setSubmittedAt(Instant submittedAt) {
         this.submittedAt = submittedAt;
+    }
+
+    public void setGradedAt(Instant gradedAt) {
+        this.gradedAt = gradedAt;
     }
 }

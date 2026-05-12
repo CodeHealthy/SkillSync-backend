@@ -1,11 +1,10 @@
 package app.SkillSync.dto;
 
-import jakarta.validation.constraints.NotBlank;
-
 public class SubmitAssignmentRequest {
 
-    @NotBlank(message = "Submitted answer is required")
     private String submittedAnswer;
+
+    private String submittedCode;
 
     public SubmitAssignmentRequest() {
     }
@@ -14,7 +13,15 @@ public class SubmitAssignmentRequest {
         return submittedAnswer;
     }
 
+    public String getSubmittedCode() {
+        return submittedCode;
+    }
+
     public void setSubmittedAnswer(String submittedAnswer) {
         this.submittedAnswer = submittedAnswer;
+    }
+
+    public void setSubmittedCode(String submittedCode) {
+        this.submittedCode = submittedCode;
     }
 }

@@ -2,8 +2,8 @@ package app.SkillSync.service;
 
 import app.SkillSync.dto.AssignAssessmentRequest;
 import app.SkillSync.dto.CreateAssessmentRequest;
-import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.dto.GradeAssignmentRequest;
+import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.model.*;
 import app.SkillSync.repository.AssessmentAssignmentRepository;
 import app.SkillSync.repository.AssessmentRepository;
@@ -35,8 +35,11 @@ public class AssessmentService {
         assessment.setTitle(request.getTitle().trim());
         assessment.setDescription(request.getDescription());
         assessment.setType(request.getType());
+        assessment.setLanguage(resolveLanguage(request));
         assessment.setMaxScore(request.getMaxScore());
         assessment.setPrompt(request.getPrompt().trim());
+        assessment.setStarterCode(request.getStarterCode());
+        assessment.setExpectedOutput(request.getExpectedOutput());
         assessment.setCreatedAt(Instant.now());
 
         return assessmentRepository.save(assessment);
@@ -69,10 +72,18 @@ public class AssessmentService {
         AssessmentAssignment assignment = new AssessmentAssignment();
         assignment.setAssessmentId(assessment.getId());
         assignment.setAssessmentTitle(assessment.getTitle());
+        assignment.setAssessmentType(assessment.getType());
+        assignment.setLanguage(assessment.getLanguage());
+        assignment.setPrompt(assessment.getPrompt());
+        assignment.setStarterCode(assessment.getStarterCode());
+        assignment.setExpectedOutput(assessment.getExpectedOutput());
+
         assignment.setCandidateId(candidate.getId());
         assignment.setCandidateName(candidate.getName());
         assignment.setCandidateEmail(candidate.getEmail());
+
         assignment.setStatus(AssignmentStatus.ASSIGNED);
+        assignment.setExecutionStatus("NOT_RUN");
         assignment.setAssignedAt(Instant.now());
 
         return assignmentRepository.save(assignment);
@@ -106,12 +117,32 @@ public class AssessmentService {
             throw new IllegalArgumentException("Assignment has already been submitted");
         }
 
-        assignment.setSubmittedAnswer(request.getSubmittedAnswer().trim());
+        boolean isCodingChallenge = assignment.getAssessmentType() == AssessmentType.CODING_CHALLENGE;
+
+        if (isCodingChallenge) {
+            if (request.getSubmittedCode() == null || request.getSubmittedCode().trim().isEmpty()) {
+                throw new IllegalArgumentException("Submitted code is required");
+            }
+
+            assignment.setSubmittedCode(request.getSubmittedCode().trim());
+            assignment.setSubmittedAnswer(null);
+            assignment.setExecutionStatus("PENDING_EXECUTION");
+        } else {
+            if (request.getSubmittedAnswer() == null || request.getSubmittedAnswer().trim().isEmpty()) {
+                throw new IllegalArgumentException("Submitted answer is required");
+            }
+
+            assignment.setSubmittedAnswer(request.getSubmittedAnswer().trim());
+            assignment.setSubmittedCode(null);
+            assignment.setExecutionStatus("NOT_APPLICABLE");
+        }
+
         assignment.setStatus(AssignmentStatus.SUBMITTED);
         assignment.setSubmittedAt(Instant.now());
 
         return assignmentRepository.save(assignment);
     }
+
     public AssessmentAssignment gradeAssignment(
             String assignmentId,
             GradeAssignmentRequest request
@@ -126,7 +157,20 @@ public class AssessmentService {
         assignment.setScore(request.getScore());
         assignment.setFeedback(request.getFeedback());
         assignment.setStatus(AssignmentStatus.GRADED);
+        assignment.setGradedAt(Instant.now());
 
         return assignmentRepository.save(assignment);
+    }
+
+    private ProgrammingLanguage resolveLanguage(CreateAssessmentRequest request) {
+        if (request.getType() == AssessmentType.QUIZ) {
+            return ProgrammingLanguage.TEXT;
+        }
+
+        if (request.getLanguage() == null || request.getLanguage() == ProgrammingLanguage.TEXT) {
+            return ProgrammingLanguage.JAVA;
+        }
+
+        return request.getLanguage();
     }
 }
