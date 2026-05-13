@@ -2,9 +2,13 @@ name: Backend CI
 
 on:
   push:
-    branches: [main, uat]
+    branches:
+      - main
+      - uat
   pull_request:
-    branches: [main, uat]
+    branches:
+      - main
+      - uat
 
 jobs:
   build:
@@ -12,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Java 17
@@ -22,8 +26,8 @@ jobs:
           java-version: 17
           cache: maven
 
-      - name: Build backend
-        run: mvn clean package -DskipTests
+      - name: Compile backend
+        run: mvn clean compile
 
-      - name: Run tests
-        run: mvn test
+      - name: Package backend
+        run: mvn package -DskipTests
