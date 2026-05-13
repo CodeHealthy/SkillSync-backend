@@ -12,4 +12,7 @@ public interface AssessmentAssignmentRepository extends MongoRepository<Assessme
     List<AssessmentAssignment> findByCandidateId(String candidateId);
 
     boolean existsByAssessmentIdAndCandidateId(String assessmentId, String candidateId);
+    List<AssessmentAssignment> findByOrganizationId(String organizationId);
+
+    List<AssessmentAssignment> findByCandidateIdIn(List<String> candidateIds);
 }

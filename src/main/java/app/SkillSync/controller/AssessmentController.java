@@ -58,10 +58,9 @@ public class AssessmentController {
 
     @PreAuthorize("hasRole('CANDIDATE')")
     @GetMapping("/my-assignments")
-    public ResponseEntity<List<AssessmentAssignment>> getMyAssignments(Authentication authentication) {
-        String loggedInEmail = authentication.getName();
+    public ResponseEntity<List<AssessmentAssignment>> getMyAssignments() {
         return ResponseEntity.ok(
-                assessmentService.getAssignmentsForCandidateEmail(loggedInEmail)
+                assessmentService.getAssignmentsForCurrentCandidate()
         );
     }
 
@@ -69,14 +68,10 @@ public class AssessmentController {
     @PostMapping("/assignments/{assignmentId}/submit")
     public ResponseEntity<AssessmentAssignment> submitAssignment(
             @PathVariable String assignmentId,
-            @Valid @RequestBody SubmitAssignmentRequest request,
-            Authentication authentication
+            @Valid @RequestBody SubmitAssignmentRequest request
     ) {
-        String loggedInEmail = authentication.getName();
-
         AssessmentAssignment assignment = assessmentService.submitAssignment(
                 assignmentId,
-                loggedInEmail,
                 request
         );
 
@@ -94,6 +89,14 @@ public class AssessmentController {
                 request
         );
 
+        return ResponseEntity.ok(assignment);
+    }
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping("/assignments/{assignmentId}/execute")
+    public ResponseEntity<AssessmentAssignment> executeAssignment(
+            @PathVariable String assignmentId
+    ) {
+        AssessmentAssignment assignment = assessmentService.executeAssignment(assignmentId);
         return ResponseEntity.ok(assignment);
     }
 }

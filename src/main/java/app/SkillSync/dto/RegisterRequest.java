@@ -19,6 +19,15 @@ public class RegisterRequest {
     private String password;
 
     private Role role;
+    private String organizationName;
+
+    public String getOrganizationName() {
+        return organizationName;
+    }
+
+    public void setOrganizationName(String organizationName) {
+        this.organizationName = organizationName;
+    }
 
     public RegisterRequest() {
     }

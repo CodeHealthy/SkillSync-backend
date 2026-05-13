@@ -22,6 +22,7 @@ public class User {
     private Role role;
 
     private Instant createdAt;
+    private String organizationId;
 
     public User() {
     }
@@ -80,5 +81,12 @@ public class User {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
     }
 }

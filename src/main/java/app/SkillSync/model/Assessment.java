@@ -24,6 +24,15 @@ public class Assessment {
     private String expectedOutput;
 
     private Instant createdAt;
+    private String organizationId;
+
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
+    }
 
     public Assessment() {
     }

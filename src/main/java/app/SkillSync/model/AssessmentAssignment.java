@@ -39,6 +39,25 @@ public class AssessmentAssignment {
     private Instant assignedAt;
     private Instant submittedAt;
     private Instant gradedAt;
+    private Integer maxScore;
+    private String organizationId;
+    private String organizationName;
+
+    public String getOrganizationName() {
+        return organizationName;
+    }
+
+    public void setOrganizationName(String organizationName) {
+        this.organizationName = organizationName;
+    }
+
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
+    }
 
     public AssessmentAssignment() {
     }
@@ -217,5 +236,13 @@ public class AssessmentAssignment {
 
     public void setGradedAt(Instant gradedAt) {
         this.gradedAt = gradedAt;
+    }
+
+    public Integer getMaxScore() {
+        return maxScore;
+    }
+
+    public void setMaxScore(Integer maxScore) {
+        this.maxScore = maxScore;
     }
 }

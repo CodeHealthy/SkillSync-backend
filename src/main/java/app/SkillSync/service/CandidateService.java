@@ -3,8 +3,12 @@ package app.SkillSync.service;
 import app.SkillSync.dto.CreateCandidateRequest;
 import app.SkillSync.dto.SubmitTestResultRequest;
 import app.SkillSync.model.Candidate;
+import app.SkillSync.model.Role;
 import app.SkillSync.model.TestResult;
+import app.SkillSync.model.User;
 import app.SkillSync.repository.CandidateRepository;
+import app.SkillSync.repository.UserRepository;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -15,29 +19,65 @@ import java.util.List;
 public class CandidateService {
 
     private final CandidateRepository candidateRepository;
+    private final UserRepository userRepository;
 
-    public CandidateService(CandidateRepository candidateRepository) {
+    public CandidateService(CandidateRepository candidateRepository,UserRepository userRepository) {
         this.candidateRepository = candidateRepository;
+        this.userRepository = userRepository;
     }
 
     public Candidate createCandidate(CreateCandidateRequest request) {
+        User adminUser = getCurrentUser();
+
+        String organizationId = adminUser.getOrganizationId();
+
+        if (organizationId == null || organizationId.isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
         String normalizedEmail = request.getEmail().trim().toLowerCase();
 
-        if (candidateRepository.existsByEmail(normalizedEmail)) {
-            throw new IllegalArgumentException("Candidate email already exists");
+        if (candidateRepository.existsByOrganizationIdAndEmailIgnoreCase(organizationId, normalizedEmail)) {
+            throw new RuntimeException("Candidate already exists in your organization.");
         }
 
         Candidate candidate = new Candidate();
         candidate.setName(request.getName().trim());
         candidate.setEmail(normalizedEmail);
-        candidate.setTestResults(new ArrayList<>());
+        candidate.setOrganizationId(organizationId);
+        candidate.setCreatedByAdminId(adminUser.getId());
         candidate.setCreatedAt(Instant.now());
+        candidate.setStatus("INVITED");
+
+        userRepository.findByEmail(normalizedEmail)
+                .filter(existingUser -> existingUser.getRole() == Role.CANDIDATE)
+                .ifPresent(candidateUser -> {
+                    candidate.setUserId(candidateUser.getId());
+                    candidate.setStatus("REGISTERED");
+                });
 
         return candidateRepository.save(candidate);
     }
 
+    private User getCurrentUser() {
+        String email = SecurityContextHolder.getContext()
+                .getAuthentication()
+                .getName();
+
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Authenticated user not found."));
+    }
+
     public List<Candidate> getAllCandidates() {
-        return candidateRepository.findAll();
+        User adminUser = getCurrentUser();
+
+        String organizationId = adminUser.getOrganizationId();
+
+        if (organizationId == null || organizationId.isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        return candidateRepository.findByOrganizationId(organizationId);
     }
 
     public List<Candidate> searchCandidatesByName(String name) {
@@ -78,5 +118,34 @@ public class CandidateService {
         }
 
         return candidate.getTestResults();
+    }
+    public Candidate createCandidate(CreateCandidateRequest request, User adminUser) {
+        String organizationId = adminUser.getOrganizationId();
+
+        if (organizationId == null || organizationId.isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        candidateRepository
+                .findByOrganizationIdAndEmailIgnoreCase(organizationId, request.getEmail())
+                .ifPresent(existing -> {
+                    throw new RuntimeException("Candidate already exists in your organization.");
+                });
+
+        Candidate candidate = new Candidate();
+        candidate.setName(request.getName());
+        candidate.setEmail(request.getEmail().toLowerCase().trim());
+        candidate.setOrganizationId(organizationId);
+        candidate.setCreatedByAdminId(adminUser.getId());
+        candidate.setStatus("INVITED");
+
+        userRepository.findByEmail(request.getEmail().toLowerCase().trim())
+                .filter(user -> "CANDIDATE".equals(user.getRole()))
+                .ifPresent(user -> {
+                    candidate.setUserId(user.getId());
+                    candidate.setStatus("REGISTERED");
+                });
+
+        return candidateRepository.save(candidate);
     }
 }

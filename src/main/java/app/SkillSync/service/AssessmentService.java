@@ -5,9 +5,8 @@ import app.SkillSync.dto.CreateAssessmentRequest;
 import app.SkillSync.dto.GradeAssignmentRequest;
 import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.model.*;
-import app.SkillSync.repository.AssessmentAssignmentRepository;
-import app.SkillSync.repository.AssessmentRepository;
-import app.SkillSync.repository.CandidateRepository;
+import app.SkillSync.repository.*;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -19,15 +18,24 @@ public class AssessmentService {
     private final AssessmentRepository assessmentRepository;
     private final AssessmentAssignmentRepository assignmentRepository;
     private final CandidateRepository candidateRepository;
+    private final CodeExecutionService codeExecutionService;
+    private final UserRepository userRepository;
+    private final OrganizationRepository organizationRepository;
 
     public AssessmentService(
             AssessmentRepository assessmentRepository,
             AssessmentAssignmentRepository assignmentRepository,
-            CandidateRepository candidateRepository
+            CandidateRepository candidateRepository,
+            CodeExecutionService codeExecutionService,
+            UserRepository userRepository,
+            OrganizationRepository organizationRepository
     ) {
         this.assessmentRepository = assessmentRepository;
         this.assignmentRepository = assignmentRepository;
         this.candidateRepository = candidateRepository;
+        this.codeExecutionService = codeExecutionService;
+        this.userRepository = userRepository;
+        this.organizationRepository = organizationRepository;
     }
 
     public Assessment createAssessment(CreateAssessmentRequest request) {
@@ -42,11 +50,25 @@ public class AssessmentService {
         assessment.setExpectedOutput(request.getExpectedOutput());
         assessment.setCreatedAt(Instant.now());
 
+        User adminUser = getCurrentUser();
+
+        if (adminUser.getOrganizationId() == null || adminUser.getOrganizationId().isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        assessment.setOrganizationId(adminUser.getOrganizationId());
+
         return assessmentRepository.save(assessment);
     }
 
     public List<Assessment> getAllAssessments() {
-        return assessmentRepository.findAll();
+        User adminUser = getCurrentUser();
+
+        if (adminUser.getOrganizationId() == null || adminUser.getOrganizationId().isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        return assessmentRepository.findByOrganizationId(adminUser.getOrganizationId());
     }
 
     public Assessment getAssessmentById(String assessmentId) {
@@ -59,6 +81,25 @@ public class AssessmentService {
 
         Candidate candidate = candidateRepository.findById(request.getCandidateId())
                 .orElseThrow(() -> new IllegalArgumentException("Candidate not found"));
+
+        User adminUser = getCurrentUser();
+        String organizationId = adminUser.getOrganizationId();
+
+        String organizationName = organizationRepository.findById(organizationId)
+                .map(organization -> organization.getName())
+                .orElse("Organization");
+
+        if (organizationId == null || organizationId.isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        if (!organizationId.equals(candidate.getOrganizationId())) {
+            throw new RuntimeException("Candidate does not belong to your organization.");
+        }
+
+        if (!organizationId.equals(assessment.getOrganizationId())) {
+            throw new RuntimeException("Assessment does not belong to your organization.");
+        }
 
         boolean alreadyAssigned = assignmentRepository.existsByAssessmentIdAndCandidateId(
                 assessment.getId(),
@@ -77,6 +118,7 @@ public class AssessmentService {
         assignment.setPrompt(assessment.getPrompt());
         assignment.setStarterCode(assessment.getStarterCode());
         assignment.setExpectedOutput(assessment.getExpectedOutput());
+        assignment.setMaxScore(assessment.getMaxScore());
 
         assignment.setCandidateId(candidate.getId());
         assignment.setCandidateName(candidate.getName());
@@ -85,16 +127,42 @@ public class AssessmentService {
         assignment.setStatus(AssignmentStatus.ASSIGNED);
         assignment.setExecutionStatus("NOT_RUN");
         assignment.setAssignedAt(Instant.now());
+        assignment.setOrganizationId(organizationId);
+        assignment.setOrganizationName(organizationName);
 
         return assignmentRepository.save(assignment);
     }
 
     public List<AssessmentAssignment> getAllAssignments() {
-        return assignmentRepository.findAll();
+        User adminUser = getCurrentUser();
+        String organizationId = adminUser.getOrganizationId();
+
+        if (organizationId == null || organizationId.isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        return assignmentRepository.findByOrganizationId(organizationId);
     }
 
     public List<AssessmentAssignment> getAssignmentsForCandidateEmail(String candidateEmail) {
         return assignmentRepository.findByCandidateEmailIgnoreCase(candidateEmail);
+    }
+
+    public List<AssessmentAssignment> getAssignmentsForCurrentCandidate() {
+        User candidateUser = getCurrentUser();
+
+        List<Candidate> candidateProfiles =
+                candidateRepository.findAllByUserId(candidateUser.getId());
+
+        List<String> candidateIds = candidateProfiles.stream()
+                .map(Candidate::getId)
+                .toList();
+
+        if (candidateIds.isEmpty()) {
+            return List.of();
+        }
+
+        return assignmentRepository.findByCandidateIdIn(candidateIds);
     }
 
     public List<AssessmentAssignment> getAssignmentsForCandidateId(String candidateId) {
@@ -103,15 +171,12 @@ public class AssessmentService {
 
     public AssessmentAssignment submitAssignment(
             String assignmentId,
-            String loggedInEmail,
             SubmitAssignmentRequest request
     ) {
         AssessmentAssignment assignment = assignmentRepository.findById(assignmentId)
                 .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
 
-        if (!assignment.getCandidateEmail().equalsIgnoreCase(loggedInEmail)) {
-            throw new IllegalArgumentException("You cannot submit this assignment");
-        }
+        validateCandidateCanAccessAssignment(assignment);
 
         if (assignment.getStatus() == AssignmentStatus.SUBMITTED || assignment.getStatus() == AssignmentStatus.GRADED) {
             throw new IllegalArgumentException("Assignment has already been submitted");
@@ -143,12 +208,28 @@ public class AssessmentService {
         return assignmentRepository.save(assignment);
     }
 
+    private void validateCandidateCanAccessAssignment(AssessmentAssignment assignment) {
+        User candidateUser = getCurrentUser();
+
+        List<Candidate> candidateProfiles =
+                candidateRepository.findAllByUserId(candidateUser.getId());
+
+        boolean ownsAssignment = candidateProfiles.stream()
+                .anyMatch(candidate -> candidate.getId().equals(assignment.getCandidateId()));
+
+        if (!ownsAssignment) {
+            throw new RuntimeException("You are not allowed to access this assignment.");
+        }
+    }
+
     public AssessmentAssignment gradeAssignment(
             String assignmentId,
             GradeAssignmentRequest request
     ) {
         AssessmentAssignment assignment = assignmentRepository.findById(assignmentId)
-                .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
+                .orElseThrow(() -> new RuntimeException("Assignment not found."));
+
+        validateAdminCanAccessAssignment(assignment);
 
         if (assignment.getStatus() == AssignmentStatus.ASSIGNED) {
             throw new IllegalArgumentException("Assignment has not been submitted yet");
@@ -173,4 +254,82 @@ public class AssessmentService {
 
         return request.getLanguage();
     }
+    public AssessmentAssignment executeAssignment(String assignmentId) {
+        AssessmentAssignment assignment = assignmentRepository.findById(assignmentId)
+                .orElseThrow(() -> new RuntimeException("Assignment not found."));
+
+        validateAdminCanAccessAssignment(assignment);
+
+        if (assignment.getAssessmentType() != AssessmentType.CODING_CHALLENGE) {
+            throw new IllegalArgumentException("Only coding challenges can be executed");
+        }
+
+        if (assignment.getSubmittedCode() == null || assignment.getSubmittedCode().trim().isEmpty()) {
+            throw new IllegalArgumentException("Assignment does not have submitted code");
+        }
+
+        assignment.setExecutionStatus("RUNNING");
+        assignmentRepository.save(assignment);
+
+        var executionResult = codeExecutionService.executeCode(
+                assignment.getLanguage(),
+                assignment.getSubmittedCode(),
+                assignment.getExpectedOutput()
+        );
+
+        assignment.setActualOutput(executionResult.getStdout());
+        assignment.setExecutionError(executionResult.getStderr());
+
+        if (executionResult.isTimedOut()) {
+            assignment.setExecutionStatus("TIMEOUT");
+            assignment.setScore(0);
+            assignment.setFeedback("Code execution timed out.");
+            assignment.setStatus(AssignmentStatus.GRADED);
+            assignment.setGradedAt(Instant.now());
+            return assignmentRepository.save(assignment);
+        }
+
+        if (executionResult.getExitCode() == null || executionResult.getExitCode() != 0) {
+            assignment.setExecutionStatus("ERROR");
+            assignment.setScore(0);
+            assignment.setFeedback("Code execution failed. Check execution error.");
+            assignment.setStatus(AssignmentStatus.GRADED);
+            assignment.setGradedAt(Instant.now());
+            return assignmentRepository.save(assignment);
+        }
+
+        if (executionResult.isOutputMatched()) {
+            assignment.setExecutionStatus("PASSED");
+            assignment.setScore(assignment.getMaxScore() != null ? assignment.getMaxScore() : 100);
+            assignment.setFeedback("Automatic grading passed. Output matched expected output.");
+        } else {
+            assignment.setExecutionStatus("FAILED");
+            assignment.setScore(0);
+            assignment.setFeedback("Automatic grading failed. Output did not match expected output.");
+        }
+
+        assignment.setStatus(AssignmentStatus.GRADED);
+        assignment.setGradedAt(Instant.now());
+
+        return assignmentRepository.save(assignment);
+    }
+    private User getCurrentUser() {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Authenticated user not found."));
+    }
+    private void validateAdminCanAccessAssignment(AssessmentAssignment assignment) {
+        User adminUser = getCurrentUser();
+
+        if (adminUser.getOrganizationId() == null || adminUser.getOrganizationId().isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        if (assignment.getOrganizationId() == null ||
+                !assignment.getOrganizationId().equals(adminUser.getOrganizationId())) {
+            throw new RuntimeException("You are not allowed to access this assignment.");
+        }
+    }
+
 }

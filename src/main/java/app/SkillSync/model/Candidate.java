@@ -22,6 +22,42 @@ public class Candidate {
     private List<TestResult> testResults = new ArrayList<>();
 
     private Instant createdAt;
+    private String organizationId;
+    private String userId;
+    private String status; // INVITED / REGISTERED
+    private String createdByAdminId;
+
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
+    }
+
+    public String getCreatedByAdminId() {
+        return createdByAdminId;
+    }
+
+    public void setCreatedByAdminId(String createdByAdminId) {
+        this.createdByAdminId = createdByAdminId;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
 
     public Candidate() {
     }
