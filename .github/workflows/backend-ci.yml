@@ -29,5 +29,8 @@ jobs:
       - name: Compile backend
         run: mvn clean compile
 
+      - name: Run tests
+        run: mvn test
+
       - name: Package backend
         run: mvn package -DskipTests
