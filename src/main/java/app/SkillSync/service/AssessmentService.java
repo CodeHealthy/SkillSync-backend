@@ -85,13 +85,13 @@ public class AssessmentService {
         User adminUser = getCurrentUser();
         String organizationId = adminUser.getOrganizationId();
 
-        String organizationName = organizationRepository.findById(organizationId)
-                .map(organization -> organization.getName())
-                .orElse("Organization");
-
         if (organizationId == null || organizationId.isBlank()) {
             throw new RuntimeException("Admin is not linked to an organization.");
         }
+
+        String organizationName = organizationRepository.findById(organizationId)
+                .map(Organization::getName)
+                .orElse("Organization");
 
         if (!organizationId.equals(candidate.getOrganizationId())) {
             throw new RuntimeException("Candidate does not belong to your organization.");

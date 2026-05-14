@@ -26,39 +26,6 @@ public class CandidateService {
         this.userRepository = userRepository;
     }
 
-    public Candidate createCandidate(CreateCandidateRequest request) {
-        User adminUser = getCurrentUser();
-
-        String organizationId = adminUser.getOrganizationId();
-
-        if (organizationId == null || organizationId.isBlank()) {
-            throw new RuntimeException("Admin is not linked to an organization.");
-        }
-
-        String normalizedEmail = request.getEmail().trim().toLowerCase();
-
-        if (candidateRepository.existsByOrganizationIdAndEmailIgnoreCase(organizationId, normalizedEmail)) {
-            throw new RuntimeException("Candidate already exists in your organization.");
-        }
-
-        Candidate candidate = new Candidate();
-        candidate.setName(request.getName().trim());
-        candidate.setEmail(normalizedEmail);
-        candidate.setOrganizationId(organizationId);
-        candidate.setCreatedByAdminId(adminUser.getId());
-        candidate.setCreatedAt(Instant.now());
-        candidate.setStatus("INVITED");
-
-        userRepository.findByEmail(normalizedEmail)
-                .filter(existingUser -> existingUser.getRole() == Role.CANDIDATE)
-                .ifPresent(candidateUser -> {
-                    candidate.setUserId(candidateUser.getId());
-                    candidate.setStatus("REGISTERED");
-                });
-
-        return candidateRepository.save(candidate);
-    }
-
     private User getCurrentUser() {
         String email = SecurityContextHolder.getContext()
                 .getAuthentication()
@@ -119,30 +86,33 @@ public class CandidateService {
 
         return candidate.getTestResults();
     }
-    public Candidate createCandidate(CreateCandidateRequest request, User adminUser) {
+    public Candidate createCandidate(CreateCandidateRequest request) {
+        User adminUser = getCurrentUser();
+
         String organizationId = adminUser.getOrganizationId();
 
         if (organizationId == null || organizationId.isBlank()) {
             throw new RuntimeException("Admin is not linked to an organization.");
         }
 
-        candidateRepository
-                .findByOrganizationIdAndEmailIgnoreCase(organizationId, request.getEmail())
-                .ifPresent(existing -> {
-                    throw new RuntimeException("Candidate already exists in your organization.");
-                });
+        String normalizedEmail = request.getEmail().trim().toLowerCase();
+
+        if (candidateRepository.existsByOrganizationIdAndEmailIgnoreCase(organizationId, normalizedEmail)) {
+            throw new RuntimeException("Candidate already exists in your organization.");
+        }
 
         Candidate candidate = new Candidate();
-        candidate.setName(request.getName());
-        candidate.setEmail(request.getEmail().toLowerCase().trim());
+        candidate.setName(request.getName().trim());
+        candidate.setEmail(normalizedEmail);
         candidate.setOrganizationId(organizationId);
         candidate.setCreatedByAdminId(adminUser.getId());
+        candidate.setCreatedAt(Instant.now());
         candidate.setStatus("INVITED");
 
-        userRepository.findByEmail(request.getEmail().toLowerCase().trim())
-                .filter(user -> "CANDIDATE".equals(user.getRole()))
-                .ifPresent(user -> {
-                    candidate.setUserId(user.getId());
+        userRepository.findByEmail(normalizedEmail)
+                .filter(existingUser -> existingUser.getRole() == Role.CANDIDATE)
+                .ifPresent(candidateUser -> {
+                    candidate.setUserId(candidateUser.getId());
                     candidate.setStatus("REGISTERED");
                 });
 

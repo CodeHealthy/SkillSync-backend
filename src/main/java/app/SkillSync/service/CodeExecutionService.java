@@ -5,12 +5,16 @@ import app.SkillSync.model.ProgrammingLanguage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.*;
 
@@ -23,32 +27,32 @@ public class CodeExecutionService {
     @Value("${code.execution.enabled:true}")
     private boolean executionEnabled;
 
-    private static final int MAX_OUTPUT_LENGTH = 5000;
+    @Value("${code.execution.max-source-size-chars:20000}")
+    private int maxSourceSizeChars;
+
+    @Value("${code.execution.max-output-size-chars:5000}")
+    private int maxOutputSizeChars;
+
+    private static final Set<ProgrammingLanguage> EXECUTABLE_LANGUAGES = EnumSet.of(
+            ProgrammingLanguage.JAVA,
+            ProgrammingLanguage.JAVASCRIPT,
+            ProgrammingLanguage.PYTHON
+    );
 
     public CodeExecutionResult executeCode(
             ProgrammingLanguage language,
             String sourceCode,
             String expectedOutput
     ) {
-        if (!executionEnabled) {
-            throw new IllegalStateException("Code execution is disabled");
-        }
-
-        if (language == null) {
-            throw new IllegalArgumentException("Programming language is required");
-        }
-
-        if (sourceCode == null || sourceCode.trim().isEmpty()) {
-            throw new IllegalArgumentException("Source code is required");
-        }
+        validateExecutionRequest(language, sourceCode);
 
         Path tempDir = null;
+        ExecutorService executorService = null;
 
         try {
             tempDir = Files.createTempDirectory("skillsync-code-");
 
             DockerExecutionSpec spec = prepareExecutionSpec(language, sourceCode, tempDir);
-
             String containerName = "skillsync-" + UUID.randomUUID();
 
             List<String> command = buildDockerCommand(containerName, tempDir, spec);
@@ -56,14 +60,14 @@ public class CodeExecutionService {
             ProcessBuilder processBuilder = new ProcessBuilder(command);
             Process process = processBuilder.start();
 
-            ExecutorService executorService = Executors.newFixedThreadPool(2);
+            executorService = Executors.newFixedThreadPool(2);
 
             Future<String> stdoutFuture = executorService.submit(() ->
-                    readLimited(process.getInputStream().readAllBytes())
+                    readLimited(process.getInputStream(), maxOutputSizeChars)
             );
 
             Future<String> stderrFuture = executorService.submit(() ->
-                    readLimited(process.getErrorStream().readAllBytes())
+                    readLimited(process.getErrorStream(), maxOutputSizeChars)
             );
 
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
@@ -74,8 +78,6 @@ public class CodeExecutionService {
 
                 String stdout = getFutureValue(stdoutFuture);
                 String stderr = getFutureValue(stderrFuture);
-
-                executorService.shutdownNow();
 
                 return new CodeExecutionResult(
                         language.name(),
@@ -92,9 +94,7 @@ public class CodeExecutionService {
             String stdout = getFutureValue(stdoutFuture);
             String stderr = getFutureValue(stderrFuture);
 
-            executorService.shutdownNow();
-
-            boolean matched = outputsMatch(stdout, expectedOutput);
+            boolean matched = exitCode == 0 && outputsMatch(stdout, expectedOutput);
 
             return new CodeExecutionResult(
                     language.name(),
@@ -106,18 +106,59 @@ public class CodeExecutionService {
             );
 
         } catch (Exception exception) {
+            String languageName = language == null ? "UNKNOWN" : language.name();
+
             return new CodeExecutionResult(
-                    language.name(),
+                    languageName,
                     "",
-                    exception.getMessage(),
+                    safeErrorMessage(exception),
                     null,
                     false,
                     false
             );
         } finally {
+            if (executorService != null) {
+                executorService.shutdownNow();
+            }
+
             if (tempDir != null) {
                 deleteDirectoryQuietly(tempDir);
             }
+        }
+    }
+
+    private void validateExecutionRequest(
+            ProgrammingLanguage language,
+            String sourceCode
+    ) {
+        if (!executionEnabled) {
+            throw new IllegalStateException("Code execution is disabled");
+        }
+
+        if (language == null) {
+            throw new IllegalArgumentException("Programming language is required");
+        }
+
+        if (!EXECUTABLE_LANGUAGES.contains(language)) {
+            throw new IllegalArgumentException("Unsupported executable language: " + language);
+        }
+
+        if (sourceCode == null || sourceCode.trim().isEmpty()) {
+            throw new IllegalArgumentException("Source code is required");
+        }
+
+        if (sourceCode.length() > maxSourceSizeChars) {
+            throw new IllegalArgumentException(
+                    "Source code exceeds maximum allowed size of " + maxSourceSizeChars + " characters"
+            );
+        }
+
+        if (timeoutSeconds <= 0) {
+            throw new IllegalStateException("Code execution timeout must be greater than zero");
+        }
+
+        if (maxOutputSizeChars <= 0) {
+            throw new IllegalStateException("Maximum output size must be greater than zero");
         }
     }
 
@@ -213,6 +254,43 @@ public class CodeExecutionService {
         return command;
     }
 
+    private String readLimited(InputStream inputStream, int maxChars) throws IOException {
+        int maxBytes = Math.max(maxChars * 4, 1024);
+        byte[] buffer = new byte[1024];
+
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        boolean truncated = false;
+
+        int bytesRead;
+        while ((bytesRead = inputStream.read(buffer)) != -1) {
+            if (outputStream.size() + bytesRead > maxBytes) {
+                int allowedBytes = Math.max(maxBytes - outputStream.size(), 0);
+
+                if (allowedBytes > 0) {
+                    outputStream.write(buffer, 0, allowedBytes);
+                }
+
+                truncated = true;
+                break;
+            }
+
+            outputStream.write(buffer, 0, bytesRead);
+        }
+
+        String output = outputStream.toString(StandardCharsets.UTF_8);
+
+        if (output.length() > maxChars) {
+            output = output.substring(0, maxChars);
+            truncated = true;
+        }
+
+        if (truncated) {
+            return output + "\n...output truncated...";
+        }
+
+        return output;
+    }
+
     private void forceRemoveContainer(String containerName) {
         try {
             new ProcessBuilder("docker", "rm", "-f", containerName)
@@ -244,16 +322,6 @@ public class CodeExecutionService {
                 .trim();
     }
 
-    private String readLimited(byte[] bytes) {
-        String output = new String(bytes, StandardCharsets.UTF_8);
-
-        if (output.length() > MAX_OUTPUT_LENGTH) {
-            return output.substring(0, MAX_OUTPUT_LENGTH) + "\n...output truncated...";
-        }
-
-        return output;
-    }
-
     private String getFutureValue(Future<String> future) {
         try {
             return future.get(1, TimeUnit.SECONDS);
@@ -270,20 +338,31 @@ public class CodeExecutionService {
         return original + "\n" + message;
     }
 
+    private String safeErrorMessage(Exception exception) {
+        String message = exception.getMessage();
+
+        if (message == null || message.isBlank()) {
+            return "Code execution failed unexpectedly.";
+        }
+
+        return message;
+    }
+
     private void deleteDirectoryQuietly(Path directory) {
         try {
             if (!Files.exists(directory)) {
                 return;
             }
 
-            Files.walk(directory)
-                    .sorted((a, b) -> b.compareTo(a))
-                    .forEach(path -> {
-                        try {
-                            Files.deleteIfExists(path);
-                        } catch (IOException ignored) {
-                        }
-                    });
+            try (var paths = Files.walk(directory)) {
+                paths.sorted((a, b) -> b.compareTo(a))
+                        .forEach(path -> {
+                            try {
+                                Files.deleteIfExists(path);
+                            } catch (IOException ignored) {
+                            }
+                        });
+            }
         } catch (IOException ignored) {
         }
     }
