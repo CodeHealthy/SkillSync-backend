@@ -40,7 +40,6 @@ jobs:
             git fetch origin
             git checkout uat
             git pull origin uat
-
             cat > .env <<'EOF'
             MONGODB_URI='${{ secrets.MONGODB_URI }}'
             JWT_SECRET='${{ secrets.JWT_SECRET }}'
@@ -49,11 +48,12 @@ jobs:
             CODE_EXECUTION_TIMEOUT_SECONDS=8
             CODE_EXECUTION_MAX_SOURCE_SIZE_CHARS=20000
             CODE_EXECUTION_MAX_OUTPUT_SIZE_CHARS=5000
+            CORS_ALLOWED_ORIGINS='${{ secrets.CORS_ALLOWED_ORIGINS }}'
             PORT=8080
             EOF
-
+  
             mvn clean package -DskipTests
-
+  
             sudo systemctl restart skillsync-backend
             sleep 8
             sudo systemctl status skillsync-backend --no-pager
