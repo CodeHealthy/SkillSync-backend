@@ -1,5 +1,8 @@
 package app.SkillSync.config;
 
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,8 +16,15 @@ import java.util.List;
 @Configuration
 public class CorsConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(CorsConfig.class);
+
     @Value("${app.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}")
     private String allowedOrigins;
+
+    @PostConstruct
+    public void logCorsOrigins() {
+        log.info("Configured CORS allowed origins: {}", allowedOrigins);
+    }
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
