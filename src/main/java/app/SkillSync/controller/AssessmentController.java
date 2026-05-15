@@ -13,6 +13,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import app.SkillSync.dto.CodeExecutionResult;
+import app.SkillSync.dto.RunCodeRequest;
 
 import java.util.List;
 
@@ -98,5 +100,19 @@ public class AssessmentController {
     ) {
         AssessmentAssignment assignment = assessmentService.executeAssignment(assignmentId);
         return ResponseEntity.ok(assignment);
+    }
+
+    @PreAuthorize("hasRole('CANDIDATE')")
+    @PostMapping("/assignments/{assignmentId}/run")
+    public ResponseEntity<CodeExecutionResult> runAssignmentCode(
+            @PathVariable String assignmentId,
+            @Valid @RequestBody RunCodeRequest request
+    ) {
+        CodeExecutionResult result = assessmentService.runAssignmentCode(
+                assignmentId,
+                request
+        );
+
+        return ResponseEntity.ok(result);
     }
 }

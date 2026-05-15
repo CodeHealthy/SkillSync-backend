@@ -8,6 +8,8 @@ import app.SkillSync.model.*;
 import app.SkillSync.repository.*;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import app.SkillSync.dto.CodeExecutionResult;
+import app.SkillSync.dto.RunCodeRequest;
 
 import java.time.Instant;
 import java.util.List;
@@ -162,7 +164,10 @@ public class AssessmentService {
             return List.of();
         }
 
-        return assignmentRepository.findByCandidateIdIn(candidateIds);
+        return assignmentRepository.findByCandidateIdIn(candidateIds)
+                .stream()
+                .map(this::hideSensitiveCandidateFields)
+                .toList();
     }
 
     public List<AssessmentAssignment> getAssignmentsForCandidateId(String candidateId) {
@@ -205,7 +210,8 @@ public class AssessmentService {
         assignment.setStatus(AssignmentStatus.SUBMITTED);
         assignment.setSubmittedAt(Instant.now());
 
-        return assignmentRepository.save(assignment);
+        AssessmentAssignment savedAssignment = assignmentRepository.save(assignment);
+        return hideSensitiveCandidateFields(savedAssignment);
     }
 
     private void validateCandidateCanAccessAssignment(AssessmentAssignment assignment) {
@@ -330,6 +336,39 @@ public class AssessmentService {
                 !assignment.getOrganizationId().equals(adminUser.getOrganizationId())) {
             throw new RuntimeException("You are not allowed to access this assignment.");
         }
+    }
+
+    public CodeExecutionResult runAssignmentCode(
+            String assignmentId,
+            RunCodeRequest request
+    ) {
+        AssessmentAssignment assignment = assignmentRepository.findById(assignmentId)
+                .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
+
+        validateCandidateCanAccessAssignment(assignment);
+
+        if (assignment.getAssessmentType() != AssessmentType.CODING_CHALLENGE) {
+            throw new IllegalArgumentException("Only coding challenges can be executed");
+        }
+
+        if (assignment.getStatus() != AssignmentStatus.ASSIGNED) {
+            throw new IllegalArgumentException("Only assigned assessments can be run before submission");
+        }
+
+        if (request.getSourceCode() == null || request.getSourceCode().trim().isEmpty()) {
+            throw new IllegalArgumentException("Source code is required");
+        }
+
+        return codeExecutionService.executeCode(
+                assignment.getLanguage(),
+                request.getSourceCode().trim(),
+                null
+        );
+    }
+
+    private AssessmentAssignment hideSensitiveCandidateFields(AssessmentAssignment assignment) {
+        assignment.setExpectedOutput(null);
+        return assignment;
     }
 
 }
