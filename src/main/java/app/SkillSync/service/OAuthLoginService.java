@@ -14,14 +14,14 @@ import java.time.Instant;
 import java.util.List;
 
 @Service
-public class OAuthCandidateService {
+public class OAuthLoginService {
 
     private final UserRepository userRepository;
     private final CandidateRepository candidateRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
 
-    public OAuthCandidateService(
+    public OAuthLoginService(
             UserRepository userRepository,
             CandidateRepository candidateRepository,
             PasswordEncoder passwordEncoder,
@@ -33,15 +33,20 @@ public class OAuthCandidateService {
         this.jwtService = jwtService;
     }
 
-    public User processGoogleCandidate(OAuth2User oauthUser) {
+    public User processGoogleLogin(OAuth2User oauthUser) {
         String email = extractEmail(oauthUser);
         String fullName = extractFullName(oauthUser, email);
+        boolean googleEmailVerified = extractEmailVerified(oauthUser);
 
         User user = userRepository.findByEmail(email)
-                .map(existingUser -> validateExistingUser(existingUser, fullName))
-                .orElseGet(() -> createCandidateUser(email, fullName));
+                .map(existingUser ->
+                        processExistingUser(existingUser, fullName, googleEmailVerified)
+                )
+                .orElseGet(() -> createCandidateUser(email, fullName, googleEmailVerified));
 
-        linkCandidateProfiles(user);
+        if (user.getRole() == Role.CANDIDATE) {
+            linkCandidateProfiles(user);
+        }
 
         return user;
     }
@@ -50,28 +55,54 @@ public class OAuthCandidateService {
         return jwtService.generateToken(user);
     }
 
-    private User validateExistingUser(User user, String fullName) {
-        if (user.getRole() != Role.CANDIDATE) {
-            throw new IllegalArgumentException(
-                    "Google login is currently available for candidate accounts only."
-            );
-        }
-        if (!user.isEmailVerifiedForLogin()) {
-            user.setEmailVerified(true);
-            user.setEmailVerifiedAt(Instant.now());
-            return userRepository.save(user);
-        }
+    private User processExistingUser(
+            User user,
+            String fullName,
+            boolean googleEmailVerified
+    ) {
+        boolean changed = false;
+
         if ((user.getFullName() == null || user.getFullName().isBlank())
                 && fullName != null
                 && !fullName.isBlank()) {
             user.setFullName(fullName);
-            return userRepository.save(user);
+            changed = true;
         }
 
-        return user;
+        if (googleEmailVerified && !user.isEmailVerifiedForLogin()) {
+            user.setEmailVerified(true);
+            user.setEmailVerifiedAt(Instant.now());
+            changed = true;
+        }
+
+        if (user.getRole() == Role.ADMIN) {
+            if (!user.isEmailVerifiedForLogin() && !googleEmailVerified) {
+                throw new IllegalArgumentException(
+                        "Google could not confirm this admin email as verified."
+                );
+            }
+
+            return changed ? userRepository.save(user) : user;
+        }
+
+        if (user.getRole() == Role.CANDIDATE) {
+            return changed ? userRepository.save(user) : user;
+        }
+
+        throw new IllegalArgumentException("Unsupported user role for Google login.");
     }
 
-    private User createCandidateUser(String email, String fullName) {
+    private User createCandidateUser(
+            String email,
+            String fullName,
+            boolean googleEmailVerified
+    ) {
+        if (!googleEmailVerified) {
+            throw new IllegalArgumentException(
+                    "Google account email must be verified before signing in."
+            );
+        }
+
         User user = new User();
         user.setFullName(fullName);
         user.setEmail(email);
@@ -114,5 +145,19 @@ public class OAuthCandidateService {
         }
 
         return email;
+    }
+
+    private boolean extractEmailVerified(OAuth2User oauthUser) {
+        Object emailVerifiedAttribute = oauthUser.getAttribute("email_verified");
+
+        if (emailVerifiedAttribute instanceof Boolean verified) {
+            return verified;
+        }
+
+        if (emailVerifiedAttribute != null) {
+            return Boolean.parseBoolean(emailVerifiedAttribute.toString());
+        }
+
+        return false;
     }
 }

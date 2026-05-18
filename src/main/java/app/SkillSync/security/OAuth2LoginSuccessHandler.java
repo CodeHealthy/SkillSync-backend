@@ -1,7 +1,7 @@
 package app.SkillSync.security;
 
 import app.SkillSync.model.User;
-import app.SkillSync.service.OAuthCandidateService;
+import app.SkillSync.service.OAuthLoginService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -17,7 +17,7 @@ import java.io.IOException;
 @Component
 public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
 
-    private final OAuthCandidateService oAuthCandidateService;
+    private final OAuthLoginService oAuthLoginService;
 
     @Value("${app.oauth.frontend-success-url}")
     private String frontendSuccessUrl;
@@ -25,8 +25,8 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
     @Value("${app.oauth.frontend-failure-url}")
     private String frontendFailureUrl;
 
-    public OAuth2LoginSuccessHandler(OAuthCandidateService oAuthCandidateService) {
-        this.oAuthCandidateService = oAuthCandidateService;
+    public OAuth2LoginSuccessHandler(OAuthLoginService oAuthLoginService) {
+        this.oAuthLoginService = oAuthLoginService;
     }
 
     @Override
@@ -38,8 +38,8 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         try {
             OAuth2User oauthUser = (OAuth2User) authentication.getPrincipal();
 
-            User user = oAuthCandidateService.processGoogleCandidate(oauthUser);
-            String token = oAuthCandidateService.generateToken(user);
+            User user = oAuthLoginService.processGoogleLogin(oauthUser);
+            String token = oAuthLoginService.generateToken(user);
 
             String redirectUrl = UriComponentsBuilder
                     .fromUriString(frontendSuccessUrl)
