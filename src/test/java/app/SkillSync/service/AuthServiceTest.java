@@ -1,6 +1,5 @@
 package app.SkillSync.service;
 
-import app.SkillSync.dto.AuthResponse;
 import app.SkillSync.dto.RegisterRequest;
 import app.SkillSync.model.Candidate;
 import app.SkillSync.model.Organization;
@@ -16,10 +15,11 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.List;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class AuthServiceTest {
@@ -30,6 +30,8 @@ class AuthServiceTest {
     private PasswordEncoder passwordEncoder;
     private AuthenticationManager authenticationManager;
     private JwtService jwtService;
+    private EmailTokenService emailTokenService;
+    private MailService mailService;
     private AuthService authService;
 
     @BeforeEach
@@ -40,6 +42,8 @@ class AuthServiceTest {
         passwordEncoder = mock(PasswordEncoder.class);
         authenticationManager = mock(AuthenticationManager.class);
         jwtService = mock(JwtService.class);
+        emailTokenService = mock(EmailTokenService.class);
+        mailService = mock(MailService.class);
 
         authService = new AuthService(
                 userRepository,
@@ -47,12 +51,14 @@ class AuthServiceTest {
                 authenticationManager,
                 jwtService,
                 candidateRepository,
-                organizationRepository
+                organizationRepository,
+                emailTokenService,
+                mailService
         );
     }
 
     @Test
-    void registerAdminCreatesOrganizationAndLinksAdminToOrganization() {
+    void registerAdminCreatesOrganizationAndSendsVerificationEmail() {
         RegisterRequest request = new RegisterRequest();
         request.setFullName("Admin Demo");
         request.setEmail("admin@skillsync.com");
@@ -70,22 +76,27 @@ class AuthServiceTest {
         savedUser.setEmail("admin@skillsync.com");
         savedUser.setRole(Role.ADMIN);
         savedUser.setOrganizationId("org-123");
+        savedUser.setEmailVerified(false);
 
         when(userRepository.existsByEmail("admin@skillsync.com")).thenReturn(false);
         when(passwordEncoder.encode("password123")).thenReturn("encoded-password");
         when(organizationRepository.save(any(Organization.class))).thenReturn(savedOrganization);
         when(userRepository.save(any(User.class))).thenReturn(savedUser);
-        when(jwtService.generateToken(savedUser)).thenReturn("jwt-token");
+        when(emailTokenService.createEmailVerificationToken(savedUser))
+                .thenReturn("verification-token");
 
-        AuthResponse response = authService.register(request);
-
-        assertEquals("jwt-token", response.getToken());
-        assertEquals("user-123", response.getUserId());
-        assertEquals("admin@skillsync.com", response.getEmail());
-        assertEquals(Role.ADMIN, response.getRole());
+        authService.register(request);
 
         verify(organizationRepository).save(any(Organization.class));
+        verify(userRepository).save(any(User.class));
+        verify(emailTokenService).createEmailVerificationToken(savedUser);
+        verify(mailService).sendVerificationEmail(
+                eq("admin@skillsync.com"),
+                eq("Admin Demo"),
+                contains("/verify-email?token=verification-token")
+        );
         verify(candidateRepository, never()).findAllByEmailIgnoreCase(anyString());
+        verify(jwtService, never()).generateToken(any(User.class));
     }
 
     @Test
@@ -108,10 +119,12 @@ class AuthServiceTest {
 
         verify(organizationRepository, never()).save(any());
         verify(userRepository, never()).save(any());
+        verify(emailTokenService, never()).createEmailVerificationToken(any(User.class));
+        verify(mailService, never()).sendVerificationEmail(anyString(), anyString(), anyString());
     }
 
     @Test
-    void registerCandidateLinksExistingInvitedCandidateProfiles() {
+    void registerCandidateCreatesUnverifiedUserAndSendsVerificationEmail() {
         RegisterRequest request = new RegisterRequest();
         request.setFullName("Candidate Demo");
         request.setEmail("candidate@skillsync.com");
@@ -123,37 +136,28 @@ class AuthServiceTest {
         savedUser.setFullName("Candidate Demo");
         savedUser.setEmail("candidate@skillsync.com");
         savedUser.setRole(Role.CANDIDATE);
-
-        Candidate invitedProfileOne = new Candidate();
-        invitedProfileOne.setId("candidate-profile-1");
-        invitedProfileOne.setEmail("candidate@skillsync.com");
-        invitedProfileOne.setStatus("INVITED");
-
-        Candidate invitedProfileTwo = new Candidate();
-        invitedProfileTwo.setId("candidate-profile-2");
-        invitedProfileTwo.setEmail("candidate@skillsync.com");
-        invitedProfileTwo.setStatus("INVITED");
+        savedUser.setEmailVerified(false);
 
         when(userRepository.existsByEmail("candidate@skillsync.com")).thenReturn(false);
         when(passwordEncoder.encode("password123")).thenReturn("encoded-password");
         when(userRepository.save(any(User.class))).thenReturn(savedUser);
-        when(candidateRepository.findAllByEmailIgnoreCase("candidate@skillsync.com"))
-                .thenReturn(List.of(invitedProfileOne, invitedProfileTwo));
-        when(jwtService.generateToken(savedUser)).thenReturn("jwt-token");
+        when(emailTokenService.createEmailVerificationToken(savedUser))
+                .thenReturn("verification-token");
 
-        AuthResponse response = authService.register(request);
+        authService.register(request);
 
-        assertEquals("jwt-token", response.getToken());
-        assertEquals(Role.CANDIDATE, response.getRole());
+        verify(userRepository).save(any(User.class));
+        verify(emailTokenService).createEmailVerificationToken(savedUser);
+        verify(mailService).sendVerificationEmail(
+                eq("candidate@skillsync.com"),
+                eq("Candidate Demo"),
+                contains("/verify-email?token=verification-token")
+        );
 
-        assertEquals("candidate-user-123", invitedProfileOne.getUserId());
-        assertEquals("REGISTERED", invitedProfileOne.getStatus());
-
-        assertEquals("candidate-user-123", invitedProfileTwo.getUserId());
-        assertEquals("REGISTERED", invitedProfileTwo.getStatus());
-
-        verify(candidateRepository, times(2)).save(any(Candidate.class));
+        verify(candidateRepository, never()).findAllByEmailIgnoreCase(anyString());
+        verify(candidateRepository, never()).save(any(Candidate.class));
         verify(organizationRepository, never()).save(any());
+        verify(jwtService, never()).generateToken(any(User.class));
     }
 
     @Test
@@ -176,5 +180,55 @@ class AuthServiceTest {
         verify(userRepository, never()).save(any());
         verify(candidateRepository, never()).save(any());
         verify(organizationRepository, never()).save(any());
+        verify(emailTokenService, never()).createEmailVerificationToken(any(User.class));
+        verify(mailService, never()).sendVerificationEmail(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void verifyEmailLinksExistingInvitedCandidateProfiles() {
+        User savedUser = new User();
+        savedUser.setId("candidate-user-123");
+        savedUser.setFullName("Candidate Demo");
+        savedUser.setEmail("candidate@skillsync.com");
+        savedUser.setRole(Role.CANDIDATE);
+        savedUser.setEmailVerified(false);
+
+        Candidate invitedProfileOne = new Candidate();
+        invitedProfileOne.setId("candidate-profile-1");
+        invitedProfileOne.setEmail("candidate@skillsync.com");
+        invitedProfileOne.setStatus("INVITED");
+
+        Candidate invitedProfileTwo = new Candidate();
+        invitedProfileTwo.setId("candidate-profile-2");
+        invitedProfileTwo.setEmail("candidate@skillsync.com");
+        invitedProfileTwo.setStatus("INVITED");
+
+        app.SkillSync.model.EmailToken token = new app.SkillSync.model.EmailToken();
+        token.setUserId("candidate-user-123");
+        token.setEmail("candidate@skillsync.com");
+
+        when(emailTokenService.validateToken(
+                eq("raw-verification-token"),
+                eq(app.SkillSync.model.AuthTokenType.EMAIL_VERIFICATION)
+        )).thenReturn(token);
+
+        when(userRepository.findById("candidate-user-123")).thenReturn(java.util.Optional.of(savedUser));
+        when(userRepository.save(savedUser)).thenReturn(savedUser);
+        when(candidateRepository.findAllByEmailIgnoreCase("candidate@skillsync.com"))
+                .thenReturn(List.of(invitedProfileOne, invitedProfileTwo));
+
+        authService.verifyEmail("raw-verification-token");
+
+        assertEquals(Boolean.TRUE, savedUser.getEmailVerified());
+        assertNotNull(savedUser.getEmailVerifiedAt());
+
+        assertEquals("candidate-user-123", invitedProfileOne.getUserId());
+        assertEquals("REGISTERED", invitedProfileOne.getStatus());
+
+        assertEquals("candidate-user-123", invitedProfileTwo.getUserId());
+        assertEquals("REGISTERED", invitedProfileTwo.getStatus());
+
+        verify(candidateRepository, times(2)).save(any(Candidate.class));
+        verify(emailTokenService).markUsed(token);
     }
 }
