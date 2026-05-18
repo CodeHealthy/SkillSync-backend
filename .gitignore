@@ -5,6 +5,14 @@ target/
 .idea/
 .vscode/
 
+# IGNORE ENV FILES & PEM
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+
 # Ignore application properties
 src/main/resources/application.properties
 src/main/resources/application.yml
