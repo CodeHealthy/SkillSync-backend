@@ -24,6 +24,9 @@ public class User {
     private Instant createdAt;
     private String organizationId;
 
+    private Boolean emailVerified;
+    private Instant emailVerifiedAt;
+
     public User() {
     }
 
@@ -59,6 +62,22 @@ public class User {
         return createdAt;
     }
 
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
+    public Boolean getEmailVerified() {
+        return emailVerified;
+    }
+
+    public Instant getEmailVerifiedAt() {
+        return emailVerifiedAt;
+    }
+
+    public boolean isEmailVerifiedForLogin() {
+        return emailVerified == null || Boolean.TRUE.equals(emailVerified);
+    }
+
     public void setId(String id) {
         this.id = id;
     }
@@ -82,11 +101,16 @@ public class User {
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
     }
-    public String getOrganizationId() {
-        return organizationId;
-    }
 
     public void setOrganizationId(String organizationId) {
         this.organizationId = organizationId;
+    }
+
+    public void setEmailVerified(Boolean emailVerified) {
+        this.emailVerified = emailVerified;
+    }
+
+    public void setEmailVerifiedAt(Instant emailVerifiedAt) {
+        this.emailVerifiedAt = emailVerifiedAt;
     }
 }

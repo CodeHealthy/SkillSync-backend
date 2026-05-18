@@ -56,7 +56,11 @@ public class OAuthCandidateService {
                     "Google login is currently available for candidate accounts only."
             );
         }
-
+        if (!user.isEmailVerifiedForLogin()) {
+            user.setEmailVerified(true);
+            user.setEmailVerifiedAt(Instant.now());
+            return userRepository.save(user);
+        }
         if ((user.getFullName() == null || user.getFullName().isBlank())
                 && fullName != null
                 && !fullName.isBlank()) {
@@ -75,6 +79,8 @@ public class OAuthCandidateService {
         user.setRole(Role.CANDIDATE);
         user.setOrganizationId(null);
         user.setCreatedAt(Instant.now());
+        user.setEmailVerified(true);
+        user.setEmailVerifiedAt(Instant.now());
 
         return userRepository.save(user);
     }
