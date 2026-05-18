@@ -1,26 +1,30 @@
 package app.SkillSync.service;
-import app.SkillSync.model.Candidate;
-import app.SkillSync.model.Organization;
-import app.SkillSync.repository.CandidateRepository;
 
-import java.util.List;
 import app.SkillSync.dto.AuthResponse;
 import app.SkillSync.dto.LoginRequest;
 import app.SkillSync.dto.RegisterRequest;
+import app.SkillSync.model.Candidate;
+import app.SkillSync.model.Organization;
 import app.SkillSync.model.Role;
 import app.SkillSync.model.User;
+import app.SkillSync.repository.CandidateRepository;
 import app.SkillSync.repository.OrganizationRepository;
 import app.SkillSync.repository.UserRepository;
 import app.SkillSync.security.JwtService;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.List;
 
 @Service
 public class AuthService {
+
+    private static final String INVALID_LOGIN_MESSAGE = "Invalid email or password";
 
     private final CandidateRepository candidateRepository;
     private final UserRepository userRepository;
@@ -46,7 +50,8 @@ public class AuthService {
     }
 
     public AuthResponse register(RegisterRequest request) {
-        String normalizedEmail = request.getEmail().trim().toLowerCase();
+        String normalizedEmail = normalizeEmail(request.getEmail());
+        String normalizedFullName = normalizeRequiredText(request.getFullName(), "Full name is required");
 
         if (userRepository.existsByEmail(normalizedEmail)) {
             throw new IllegalArgumentException("Email is already registered");
@@ -55,19 +60,20 @@ public class AuthService {
         Role role = request.getRole() != null ? request.getRole() : Role.CANDIDATE;
 
         User user = new User();
-        user.setFullName(request.getFullName().trim());
+        user.setFullName(normalizedFullName);
         user.setEmail(normalizedEmail);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRole(role);
         user.setCreatedAt(Instant.now());
 
         if (role == Role.ADMIN) {
-            if (request.getOrganizationName() == null || request.getOrganizationName().trim().isBlank()) {
-                throw new IllegalArgumentException("Organization name is required for admin registration.");
-            }
+            String organizationName = normalizeRequiredText(
+                    request.getOrganizationName(),
+                    "Organization name is required for admin registration."
+            );
 
             Organization organization = new Organization();
-            organization.setName(request.getOrganizationName().trim());
+            organization.setName(organizationName);
             organization.setCreatedAt(Instant.now());
 
             Organization savedOrganization = organizationRepository.save(organization);
@@ -77,40 +83,44 @@ public class AuthService {
         User savedUser = userRepository.save(user);
 
         if (savedUser.getRole() == Role.CANDIDATE) {
-            List<Candidate> matchingCandidateProfiles =
-                    candidateRepository.findAllByEmailIgnoreCase(normalizedEmail);
-
-            for (Candidate candidate : matchingCandidateProfiles) {
-                candidate.setUserId(savedUser.getId());
-                candidate.setStatus("REGISTERED");
-                candidateRepository.save(candidate);
-            }
+            linkCandidateProfiles(savedUser);
         }
 
-        String token = jwtService.generateToken(savedUser);
-
-        return new AuthResponse(
-                token,
-                savedUser.getId(),
-                savedUser.getFullName(),
-                savedUser.getEmail(),
-                savedUser.getRole()
-        );
+        return buildAuthResponse(savedUser);
     }
 
     public AuthResponse login(LoginRequest request) {
-        String normalizedEmail = request.getEmail().trim().toLowerCase();
+        String normalizedEmail = normalizeEmail(request.getEmail());
 
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(
-                        normalizedEmail,
-                        request.getPassword()
-                )
-        );
+        try {
+            authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(
+                            normalizedEmail,
+                            request.getPassword()
+                    )
+            );
+        } catch (AuthenticationException ex) {
+            throw new IllegalArgumentException(INVALID_LOGIN_MESSAGE);
+        }
 
         User user = userRepository.findByEmail(normalizedEmail)
-                .orElseThrow(() -> new IllegalArgumentException("Invalid email or password"));
+                .orElseThrow(() -> new IllegalArgumentException(INVALID_LOGIN_MESSAGE));
 
+        return buildAuthResponse(user);
+    }
+
+    private void linkCandidateProfiles(User savedUser) {
+        List<Candidate> matchingCandidateProfiles =
+                candidateRepository.findAllByEmailIgnoreCase(savedUser.getEmail());
+
+        for (Candidate candidate : matchingCandidateProfiles) {
+            candidate.setUserId(savedUser.getId());
+            candidate.setStatus("REGISTERED");
+            candidateRepository.save(candidate);
+        }
+    }
+
+    private AuthResponse buildAuthResponse(User user) {
         String token = jwtService.generateToken(user);
 
         return new AuthResponse(
@@ -120,5 +130,21 @@ public class AuthService {
                 user.getEmail(),
                 user.getRole()
         );
+    }
+
+    private String normalizeEmail(String email) {
+        if (email == null || email.trim().isBlank()) {
+            throw new IllegalArgumentException("Email is required");
+        }
+
+        return email.trim().toLowerCase();
+    }
+
+    private String normalizeRequiredText(String value, String message) {
+        if (value == null || value.trim().isBlank()) {
+            throw new IllegalArgumentException(message);
+        }
+
+        return value.trim();
     }
 }
