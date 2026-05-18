@@ -1,7 +1,9 @@
 package app.SkillSync.service;
 
 import app.SkillSync.dto.RegisterRequest;
+import app.SkillSync.model.AuthTokenType;
 import app.SkillSync.model.Candidate;
+import app.SkillSync.model.EmailToken;
 import app.SkillSync.model.Organization;
 import app.SkillSync.model.Role;
 import app.SkillSync.model.User;
@@ -13,13 +15,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class AuthServiceTest {
@@ -54,6 +56,12 @@ class AuthServiceTest {
                 organizationRepository,
                 emailTokenService,
                 mailService
+        );
+
+        ReflectionTestUtils.setField(
+                authService,
+                "frontendBaseUrl",
+                "http://localhost:3000"
         );
     }
 
@@ -203,16 +211,17 @@ class AuthServiceTest {
         invitedProfileTwo.setEmail("candidate@skillsync.com");
         invitedProfileTwo.setStatus("INVITED");
 
-        app.SkillSync.model.EmailToken token = new app.SkillSync.model.EmailToken();
+        EmailToken token = new EmailToken();
         token.setUserId("candidate-user-123");
         token.setEmail("candidate@skillsync.com");
 
         when(emailTokenService.validateToken(
                 eq("raw-verification-token"),
-                eq(app.SkillSync.model.AuthTokenType.EMAIL_VERIFICATION)
+                eq(AuthTokenType.EMAIL_VERIFICATION)
         )).thenReturn(token);
 
-        when(userRepository.findById("candidate-user-123")).thenReturn(java.util.Optional.of(savedUser));
+        when(userRepository.findById("candidate-user-123"))
+                .thenReturn(Optional.of(savedUser));
         when(userRepository.save(savedUser)).thenReturn(savedUser);
         when(candidateRepository.findAllByEmailIgnoreCase("candidate@skillsync.com"))
                 .thenReturn(List.of(invitedProfileOne, invitedProfileTwo));
