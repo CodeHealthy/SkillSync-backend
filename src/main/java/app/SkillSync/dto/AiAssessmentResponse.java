@@ -1,48 +1,49 @@
 package app.SkillSync.dto;
 
 import app.SkillSync.model.AssessmentTestCase;
-import app.SkillSync.model.AssessmentType;
-import app.SkillSync.model.ProgrammingLanguage;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class CreateAssessmentRequest {
+public class AiAssessmentResponse {
 
-    @NotBlank(message = "Title is required")
     private String title;
-
     private String description;
-
-    @NotNull(message = "Assessment type is required")
-    private AssessmentType type;
-
-    private ProgrammingLanguage language;
-
-    @Min(value = 1, message = "Max score must be at least 1")
-    @Max(value = 1000, message = "Max score cannot exceed 1000")
-    private int maxScore;
-
-    @NotBlank(message = "Prompt is required")
     private String prompt;
-
     private String starterCode;
 
     /**
      * Kept for backward compatibility.
-     * New coding challenges should use testCases.
+     * For new coding challenges, testCases should drive grading.
      */
     private String expectedOutput;
 
-    @Valid
+    private Integer maxScore;
+    private String rubric;
+
     private List<AssessmentTestCase> testCases = new ArrayList<>();
 
-    public CreateAssessmentRequest() {
+    public AiAssessmentResponse() {
+    }
+
+    public AiAssessmentResponse(
+            String title,
+            String description,
+            String prompt,
+            String starterCode,
+            String expectedOutput,
+            Integer maxScore,
+            String rubric,
+            List<AssessmentTestCase> testCases
+    ) {
+        this.title = title;
+        this.description = description;
+        this.prompt = prompt;
+        this.starterCode = starterCode;
+        this.expectedOutput = expectedOutput;
+        this.maxScore = maxScore;
+        this.rubric = rubric;
+        this.testCases = testCases == null ? new ArrayList<>() : testCases;
     }
 
     public String getTitle() {
@@ -51,18 +52,6 @@ public class CreateAssessmentRequest {
 
     public String getDescription() {
         return description;
-    }
-
-    public AssessmentType getType() {
-        return type;
-    }
-
-    public ProgrammingLanguage getLanguage() {
-        return language;
-    }
-
-    public int getMaxScore() {
-        return maxScore;
     }
 
     public String getPrompt() {
@@ -77,6 +66,14 @@ public class CreateAssessmentRequest {
         return expectedOutput;
     }
 
+    public Integer getMaxScore() {
+        return maxScore;
+    }
+
+    public String getRubric() {
+        return rubric;
+    }
+
     public List<AssessmentTestCase> getTestCases() {
         return testCases;
     }
@@ -89,18 +86,6 @@ public class CreateAssessmentRequest {
         this.description = description;
     }
 
-    public void setType(AssessmentType type) {
-        this.type = type;
-    }
-
-    public void setLanguage(ProgrammingLanguage language) {
-        this.language = language;
-    }
-
-    public void setMaxScore(int maxScore) {
-        this.maxScore = maxScore;
-    }
-
     public void setPrompt(String prompt) {
         this.prompt = prompt;
     }
@@ -111,6 +96,14 @@ public class CreateAssessmentRequest {
 
     public void setExpectedOutput(String expectedOutput) {
         this.expectedOutput = expectedOutput;
+    }
+
+    public void setMaxScore(Integer maxScore) {
+        this.maxScore = maxScore;
+    }
+
+    public void setRubric(String rubric) {
+        this.rubric = rubric;
     }
 
     public void setTestCases(List<AssessmentTestCase> testCases) {

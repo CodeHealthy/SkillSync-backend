@@ -1,9 +1,11 @@
 package app.SkillSync.controller;
 
 import app.SkillSync.dto.AssignAssessmentRequest;
+import app.SkillSync.dto.AssignmentRunResult;
 import app.SkillSync.dto.CreateAssessmentRequest;
-import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.dto.GradeAssignmentRequest;
+import app.SkillSync.dto.RunCodeRequest;
+import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.model.Assessment;
 import app.SkillSync.model.AssessmentAssignment;
 import app.SkillSync.service.AssessmentService;
@@ -11,10 +13,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-import app.SkillSync.dto.CodeExecutionResult;
-import app.SkillSync.dto.RunCodeRequest;
 
 import java.util.List;
 
@@ -93,6 +92,7 @@ public class AssessmentController {
 
         return ResponseEntity.ok(assignment);
     }
+
     @PreAuthorize("hasRole('ADMIN')")
     @PostMapping("/assignments/{assignmentId}/execute")
     public ResponseEntity<AssessmentAssignment> executeAssignment(
@@ -104,11 +104,11 @@ public class AssessmentController {
 
     @PreAuthorize("hasRole('CANDIDATE')")
     @PostMapping("/assignments/{assignmentId}/run")
-    public ResponseEntity<CodeExecutionResult> runAssignmentCode(
+    public ResponseEntity<AssignmentRunResult> runAssignmentCode(
             @PathVariable String assignmentId,
             @Valid @RequestBody RunCodeRequest request
     ) {
-        CodeExecutionResult result = assessmentService.runAssignmentCode(
+        AssignmentRunResult result = assessmentService.runAssignmentCode(
                 assignmentId,
                 request
         );

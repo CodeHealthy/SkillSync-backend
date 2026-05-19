@@ -4,6 +4,8 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Document(collection = "assessments")
 public class Assessment {
@@ -21,18 +23,17 @@ public class Assessment {
 
     private String prompt;
     private String starterCode;
+
+    /**
+     * Kept for backward compatibility with old single-output assessments.
+     * New coding challenges should use testCases.
+     */
     private String expectedOutput;
+
+    private List<AssessmentTestCase> testCases = new ArrayList<>();
 
     private Instant createdAt;
     private String organizationId;
-
-    public String getOrganizationId() {
-        return organizationId;
-    }
-
-    public void setOrganizationId(String organizationId) {
-        this.organizationId = organizationId;
-    }
 
     public Assessment() {
     }
@@ -73,8 +74,16 @@ public class Assessment {
         return expectedOutput;
     }
 
+    public List<AssessmentTestCase> getTestCases() {
+        return testCases;
+    }
+
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public String getOrganizationId() {
+        return organizationId;
     }
 
     public void setId(String id) {
@@ -113,7 +122,15 @@ public class Assessment {
         this.expectedOutput = expectedOutput;
     }
 
+    public void setTestCases(List<AssessmentTestCase> testCases) {
+        this.testCases = testCases == null ? new ArrayList<>() : testCases;
+    }
+
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
     }
 }

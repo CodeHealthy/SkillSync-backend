@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,6 +45,15 @@ public class CodeExecutionService {
             String sourceCode,
             String expectedOutput
     ) {
+        return executeCode(language, sourceCode, "", expectedOutput);
+    }
+
+    public CodeExecutionResult executeCode(
+            ProgrammingLanguage language,
+            String sourceCode,
+            String stdin,
+            String expectedOutput
+    ) {
         validateExecutionRequest(language, sourceCode);
 
         Path tempDir = null;
@@ -60,7 +70,7 @@ public class CodeExecutionService {
             ProcessBuilder processBuilder = new ProcessBuilder(command);
             Process process = processBuilder.start();
 
-            executorService = Executors.newFixedThreadPool(2);
+            executorService = Executors.newFixedThreadPool(3);
 
             Future<String> stdoutFuture = executorService.submit(() ->
                     readLimited(process.getInputStream(), maxOutputSizeChars)
@@ -68,6 +78,10 @@ public class CodeExecutionService {
 
             Future<String> stderrFuture = executorService.submit(() ->
                     readLimited(process.getErrorStream(), maxOutputSizeChars)
+            );
+
+            Future<?> stdinFuture = executorService.submit(() ->
+                    writeStdin(process.getOutputStream(), stdin)
             );
 
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
@@ -88,6 +102,8 @@ public class CodeExecutionService {
                         false
                 );
             }
+
+            waitForStdinWrite(stdinFuture);
 
             int exitCode = process.exitValue();
 
@@ -225,6 +241,7 @@ public class CodeExecutionService {
         command.add("docker");
         command.add("run");
         command.add("--rm");
+        command.add("-i");
         command.add("--name");
         command.add(containerName);
 
@@ -252,6 +269,23 @@ public class CodeExecutionService {
         command.addAll(List.of(spec.args()));
 
         return command;
+    }
+
+    private void writeStdin(OutputStream outputStream, String stdin) {
+        try (OutputStream stream = outputStream) {
+            if (stdin != null && !stdin.isEmpty()) {
+                stream.write(stdin.getBytes(StandardCharsets.UTF_8));
+            }
+            stream.flush();
+        } catch (IOException ignored) {
+        }
+    }
+
+    private void waitForStdinWrite(Future<?> stdinFuture) {
+        try {
+            stdinFuture.get(1, TimeUnit.SECONDS);
+        } catch (Exception ignored) {
+        }
     }
 
     private String readLimited(InputStream inputStream, int maxChars) throws IOException {

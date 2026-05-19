@@ -4,6 +4,8 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Document(collection = "assessment_assignments")
 public class AssessmentAssignment {
@@ -18,7 +20,15 @@ public class AssessmentAssignment {
 
     private String prompt;
     private String starterCode;
+
+    /**
+     * Kept for backward compatibility with old single-output assessments.
+     * New coding challenge grading should use testCases.
+     */
     private String expectedOutput;
+
+    private List<AssessmentTestCase> testCases = new ArrayList<>();
+    private List<TestCaseExecutionResult> testCaseResults = new ArrayList<>();
 
     private String candidateId;
     private String candidateName;
@@ -42,22 +52,6 @@ public class AssessmentAssignment {
     private Integer maxScore;
     private String organizationId;
     private String organizationName;
-
-    public String getOrganizationName() {
-        return organizationName;
-    }
-
-    public void setOrganizationName(String organizationName) {
-        this.organizationName = organizationName;
-    }
-
-    public String getOrganizationId() {
-        return organizationId;
-    }
-
-    public void setOrganizationId(String organizationId) {
-        this.organizationId = organizationId;
-    }
 
     public AssessmentAssignment() {
     }
@@ -92,6 +86,14 @@ public class AssessmentAssignment {
 
     public String getExpectedOutput() {
         return expectedOutput;
+    }
+
+    public List<AssessmentTestCase> getTestCases() {
+        return testCases;
+    }
+
+    public List<TestCaseExecutionResult> getTestCaseResults() {
+        return testCaseResults;
     }
 
     public String getCandidateId() {
@@ -150,6 +152,18 @@ public class AssessmentAssignment {
         return gradedAt;
     }
 
+    public Integer getMaxScore() {
+        return maxScore;
+    }
+
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
+    public String getOrganizationName() {
+        return organizationName;
+    }
+
     public void setId(String id) {
         this.id = id;
     }
@@ -180,6 +194,14 @@ public class AssessmentAssignment {
 
     public void setExpectedOutput(String expectedOutput) {
         this.expectedOutput = expectedOutput;
+    }
+
+    public void setTestCases(List<AssessmentTestCase> testCases) {
+        this.testCases = testCases == null ? new ArrayList<>() : testCases;
+    }
+
+    public void setTestCaseResults(List<TestCaseExecutionResult> testCaseResults) {
+        this.testCaseResults = testCaseResults == null ? new ArrayList<>() : testCaseResults;
     }
 
     public void setCandidateId(String candidateId) {
@@ -238,11 +260,15 @@ public class AssessmentAssignment {
         this.gradedAt = gradedAt;
     }
 
-    public Integer getMaxScore() {
-        return maxScore;
-    }
-
     public void setMaxScore(Integer maxScore) {
         this.maxScore = maxScore;
+    }
+
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
+    }
+
+    public void setOrganizationName(String organizationName) {
+        this.organizationName = organizationName;
     }
 }
