@@ -66,6 +66,15 @@ public class AssessmentController {
     }
 
     @PreAuthorize("hasRole('CANDIDATE')")
+    @PostMapping("/assignments/{assignmentId}/start")
+    public ResponseEntity<AssessmentAssignment> startAssignment(
+            @PathVariable String assignmentId
+    ) {
+        AssessmentAssignment assignment = assessmentService.startAssignment(assignmentId);
+        return ResponseEntity.ok(assignment);
+    }
+
+    @PreAuthorize("hasRole('CANDIDATE')")
     @PostMapping("/assignments/{assignmentId}/submit")
     public ResponseEntity<AssessmentAssignment> submitAssignment(
             @PathVariable String assignmentId,

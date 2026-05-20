@@ -17,6 +17,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
 import java.util.Optional;
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -125,6 +126,9 @@ class AssessmentServiceTest {
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         AssignAssessmentRequest request = assignRequest("assessment-1", "candidate-1");
+        Instant dueAt = Instant.now().plusSeconds(86_400);
+        request.setDueAt(dueAt);
+        request.setTimeLimitMinutes(90);
 
         AssessmentAssignment savedAssignment = assessmentService.assignAssessment(request);
 
@@ -137,8 +141,48 @@ class AssessmentServiceTest {
         assertEquals(AssessmentType.CODING_CHALLENGE, savedAssignment.getAssessmentType());
         assertEquals(ProgrammingLanguage.JAVA, savedAssignment.getLanguage());
         assertEquals(100, savedAssignment.getMaxScore());
+        assertEquals(dueAt, savedAssignment.getDueAt());
+        assertEquals(90, savedAssignment.getTimeLimitMinutes());
 
         verify(assignmentRepository).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
+    void assignAssessment_whenDueDateIsPast_throwsIllegalArgumentException() {
+        Assessment assessment = assessment("assessment-1", "org-1");
+
+        when(assessmentRepository.findById("assessment-1")).thenReturn(Optional.of(assessment));
+
+        AssignAssessmentRequest request = assignRequest("assessment-1", "candidate-1");
+        request.setDueAt(Instant.now().minusSeconds(60));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.assignAssessment(request)
+        );
+
+        assertEquals("Due date must be in the future.", exception.getMessage());
+
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
+    void assignAssessment_whenTimeLimitExceedsMaximum_throwsIllegalArgumentException() {
+        Assessment assessment = assessment("assessment-1", "org-1");
+
+        when(assessmentRepository.findById("assessment-1")).thenReturn(Optional.of(assessment));
+
+        AssignAssessmentRequest request = assignRequest("assessment-1", "candidate-1");
+        request.setTimeLimitMinutes(481);
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.assignAssessment(request)
+        );
+
+        assertEquals("Time limit cannot exceed 480 minutes.", exception.getMessage());
+
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
     }
 
     @Test
@@ -218,6 +262,139 @@ class AssessmentServiceTest {
     }
 
     @Test
+    void startAssignment_whenTimedAssignment_setsStartedAndExpiresAt() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setTimeLimitMinutes(45);
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+        when(assignmentRepository.save(any(AssessmentAssignment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AssessmentAssignment startedAssignment = assessmentService.startAssignment("assignment-1");
+
+        assertNotNull(startedAssignment.getStartedAt());
+        assertNotNull(startedAssignment.getExpiresAt());
+        assertEquals(45, startedAssignment.getTimeLimitMinutes());
+    }
+
+    @Test
+    void startAssignment_whenDueDatePassed_throwsIllegalArgumentException() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setDueAt(Instant.now().minusSeconds(60));
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.startAssignment("assignment-1")
+        );
+
+        assertEquals("Assignment due date has passed.", exception.getMessage());
+
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
+    void submitAssignment_whenTimedAssignmentNotStarted_throwsIllegalArgumentException() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setTimeLimitMinutes(45);
+
+        SubmitAssignmentRequest request = new SubmitAssignmentRequest();
+        request.setSubmittedCode("public class Main {}");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.submitAssignment("assignment-1", request)
+        );
+
+        assertEquals("Start the assessment before working on it.", exception.getMessage());
+
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
+    void submitAssignment_whenTimedAssignmentExpired_throwsIllegalArgumentException() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setTimeLimitMinutes(45);
+        assignment.setStartedAt(Instant.now().minusSeconds(4_000));
+        assignment.setExpiresAt(Instant.now().minusSeconds(60));
+
+        SubmitAssignmentRequest request = new SubmitAssignmentRequest();
+        request.setSubmittedCode("public class Main {}");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.submitAssignment("assignment-1", request)
+        );
+
+        assertEquals("Assessment time limit has expired.", exception.getMessage());
+
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
+    void submitAssignment_whenDueDatePassed_throwsIllegalArgumentException() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setDueAt(Instant.now().minusSeconds(60));
+
+        SubmitAssignmentRequest request = new SubmitAssignmentRequest();
+        request.setSubmittedCode("public class Main {}");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.submitAssignment("assignment-1", request)
+        );
+
+        assertEquals("Assignment due date has passed.", exception.getMessage());
+
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
     void submitAssignment_whenCandidateDoesNotOwnAssignment_throwsRuntimeException() {
         User candidateUser = candidateUser("user-1", "candidate@example.com");
 
@@ -270,6 +447,37 @@ class AssessmentServiceTest {
         assertNull(savedAssignment.getSubmittedAnswer());
         assertEquals("PENDING_EXECUTION", savedAssignment.getExecutionStatus());
         assertNotNull(savedAssignment.getSubmittedAt());
+        assertFalse(Boolean.TRUE.equals(savedAssignment.getAutoSubmitted()));
+    }
+
+    @Test
+    void submitAssignment_whenAutoSubmittedWithinGrace_savesAutoSubmittedFlag() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setStatus(AssignmentStatus.ASSIGNED);
+        assignment.setTimeLimitMinutes(45);
+        assignment.setStartedAt(Instant.now().minusSeconds(2_800));
+        assignment.setExpiresAt(Instant.now().minusSeconds(5));
+
+        SubmitAssignmentRequest request = new SubmitAssignmentRequest();
+        request.setSubmittedCode("public class Main {}");
+        request.setAutoSubmitted(true);
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+        when(assignmentRepository.save(any(AssessmentAssignment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AssessmentAssignment savedAssignment = assessmentService.submitAssignment("assignment-1", request);
+
+        assertEquals(AssignmentStatus.SUBMITTED, savedAssignment.getStatus());
+        assertTrue(Boolean.TRUE.equals(savedAssignment.getAutoSubmitted()));
     }
 
     @Test

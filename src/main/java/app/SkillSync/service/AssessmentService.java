@@ -27,11 +27,14 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class AssessmentService {
+
+    private static final long AUTO_SUBMIT_GRACE_SECONDS = 30;
 
     private final AssessmentRepository assessmentRepository;
     private final AssessmentAssignmentRepository assignmentRepository;
@@ -104,6 +107,7 @@ public class AssessmentService {
 
     public AssessmentAssignment assignAssessment(AssignAssessmentRequest request) {
         Assessment assessment = getAssessmentById(request.getAssessmentId());
+        validateAssignmentSchedule(request);
 
         Candidate candidate = candidateRepository.findById(request.getCandidateId())
                 .orElseThrow(() -> new IllegalArgumentException("Candidate not found"));
@@ -152,8 +156,11 @@ public class AssessmentService {
         assignment.setCandidateEmail(candidate.getEmail());
 
         assignment.setStatus(AssignmentStatus.ASSIGNED);
+        assignment.setAutoSubmitted(false);
         assignment.setExecutionStatus("NOT_RUN");
         assignment.setAssignedAt(Instant.now());
+        assignment.setDueAt(request.getDueAt());
+        assignment.setTimeLimitMinutes(request.getTimeLimitMinutes());
         assignment.setOrganizationId(organizationId);
         assignment.setOrganizationName(organizationName);
 
@@ -199,6 +206,30 @@ public class AssessmentService {
         return assignmentRepository.findByCandidateId(candidateId);
     }
 
+    public AssessmentAssignment startAssignment(String assignmentId) {
+        AssessmentAssignment assignment = assignmentRepository.findById(assignmentId)
+                .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
+
+        validateCandidateCanAccessAssignment(assignment);
+
+        if (assignment.getStatus() != AssignmentStatus.ASSIGNED) {
+            throw new IllegalArgumentException("Only assigned assessments can be started");
+        }
+
+        validateAssignmentDueDateOpen(assignment);
+
+        if (assignment.getStartedAt() == null) {
+            Instant now = Instant.now();
+            assignment.setStartedAt(now);
+
+            if (assignment.getTimeLimitMinutes() != null) {
+                assignment.setExpiresAt(now.plus(assignment.getTimeLimitMinutes(), ChronoUnit.MINUTES));
+            }
+        }
+
+        return toCandidateSafeAssignment(assignmentRepository.save(assignment));
+    }
+
     public AssessmentAssignment submitAssignment(
             String assignmentId,
             SubmitAssignmentRequest request
@@ -207,6 +238,8 @@ public class AssessmentService {
                 .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
 
         validateCandidateCanAccessAssignment(assignment);
+        boolean autoSubmitted = Boolean.TRUE.equals(request.getAutoSubmitted());
+        validateAssignmentCanBeWorkedOn(assignment, autoSubmitted);
 
         if (assignment.getStatus() == AssignmentStatus.SUBMITTED || assignment.getStatus() == AssignmentStatus.GRADED) {
             throw new IllegalArgumentException("Assignment has already been submitted");
@@ -236,7 +269,10 @@ public class AssessmentService {
         }
 
         assignment.setStatus(AssignmentStatus.SUBMITTED);
-        assignment.setSubmittedAt(Instant.now());
+        assignment.setAutoSubmitted(autoSubmitted);
+        Instant submittedAt = Instant.now();
+        assignment.setSubmittedAt(submittedAt);
+        assignment.setCompletedAt(submittedAt);
 
         AssessmentAssignment savedAssignment = assignmentRepository.save(assignment);
         return toCandidateSafeAssignment(savedAssignment);
@@ -362,6 +398,7 @@ public class AssessmentService {
                 .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
 
         validateCandidateCanAccessAssignment(assignment);
+        validateAssignmentCanBeWorkedOn(assignment);
 
         if (assignment.getAssessmentType() != AssessmentType.CODING_CHALLENGE) {
             throw new IllegalArgumentException("Only coding challenges can be executed");
@@ -516,13 +553,19 @@ public class AssessmentService {
         target.setStatus(source.getStatus());
         target.setSubmittedAnswer(source.getSubmittedAnswer());
         target.setSubmittedCode(source.getSubmittedCode());
+        target.setAutoSubmitted(source.getAutoSubmitted());
         target.setExecutionStatus(source.getExecutionStatus());
         target.setActualOutput(source.getActualOutput());
         target.setExecutionError(source.getExecutionError());
         target.setScore(source.getScore());
         target.setFeedback(source.getFeedback());
         target.setAssignedAt(source.getAssignedAt());
+        target.setDueAt(source.getDueAt());
+        target.setTimeLimitMinutes(source.getTimeLimitMinutes());
+        target.setStartedAt(source.getStartedAt());
+        target.setExpiresAt(source.getExpiresAt());
         target.setSubmittedAt(source.getSubmittedAt());
+        target.setCompletedAt(source.getCompletedAt());
         target.setGradedAt(source.getGradedAt());
         target.setMaxScore(source.getMaxScore());
         target.setOrganizationId(source.getOrganizationId());
@@ -798,6 +841,54 @@ public class AssessmentService {
 
         if (!ownsAssignment) {
             throw new RuntimeException("You are not allowed to access this assignment.");
+        }
+    }
+
+    private void validateAssignmentSchedule(AssignAssessmentRequest request) {
+        if (request.getDueAt() != null && !request.getDueAt().isAfter(Instant.now())) {
+            throw new IllegalArgumentException("Due date must be in the future.");
+        }
+
+        Integer timeLimitMinutes = request.getTimeLimitMinutes();
+
+        if (timeLimitMinutes != null && timeLimitMinutes > 480) {
+            throw new IllegalArgumentException("Time limit cannot exceed 480 minutes.");
+        }
+    }
+
+    private void validateAssignmentCanBeWorkedOn(AssessmentAssignment assignment) {
+        validateAssignmentCanBeWorkedOn(assignment, false);
+    }
+
+    private void validateAssignmentCanBeWorkedOn(AssessmentAssignment assignment, boolean allowAutoSubmitGrace) {
+        validateAssignmentDueDateOpen(assignment);
+
+        if (assignment.getTimeLimitMinutes() != null && assignment.getStartedAt() == null) {
+            throw new IllegalArgumentException("Start the assessment before working on it.");
+        }
+
+        Instant now = Instant.now();
+
+        if (assignment.getExpiresAt() != null &&
+                now.isAfter(assignment.getExpiresAt()) &&
+                !isWithinAutoSubmitGrace(assignment, now, allowAutoSubmitGrace)) {
+            throw new IllegalArgumentException("Assessment time limit has expired.");
+        }
+    }
+
+    private boolean isWithinAutoSubmitGrace(
+            AssessmentAssignment assignment,
+            Instant now,
+            boolean allowAutoSubmitGrace
+    ) {
+        return allowAutoSubmitGrace &&
+                assignment.getExpiresAt() != null &&
+                !now.isAfter(assignment.getExpiresAt().plus(AUTO_SUBMIT_GRACE_SECONDS, ChronoUnit.SECONDS));
+    }
+
+    private void validateAssignmentDueDateOpen(AssessmentAssignment assignment) {
+        if (assignment.getDueAt() != null && Instant.now().isAfter(assignment.getDueAt())) {
+            throw new IllegalArgumentException("Assignment due date has passed.");
         }
     }
 

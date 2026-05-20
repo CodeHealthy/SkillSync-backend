@@ -6,6 +6,8 @@ public class SubmitAssignmentRequest {
 
     private String submittedCode;
 
+    private Boolean autoSubmitted;
+
     public SubmitAssignmentRequest() {
     }
 
@@ -17,11 +19,19 @@ public class SubmitAssignmentRequest {
         return submittedCode;
     }
 
+    public Boolean getAutoSubmitted() {
+        return autoSubmitted;
+    }
+
     public void setSubmittedAnswer(String submittedAnswer) {
         this.submittedAnswer = submittedAnswer;
     }
 
     public void setSubmittedCode(String submittedCode) {
         this.submittedCode = submittedCode;
+    }
+
+    public void setAutoSubmitted(Boolean autoSubmitted) {
+        this.autoSubmitted = autoSubmitted;
     }
 }

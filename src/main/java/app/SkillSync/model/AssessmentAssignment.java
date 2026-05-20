@@ -38,6 +38,7 @@ public class AssessmentAssignment {
 
     private String submittedAnswer;
     private String submittedCode;
+    private Boolean autoSubmitted;
 
     private String executionStatus;
     private String actualOutput;
@@ -47,7 +48,12 @@ public class AssessmentAssignment {
     private String feedback;
 
     private Instant assignedAt;
+    private Instant dueAt;
+    private Integer timeLimitMinutes;
+    private Instant startedAt;
+    private Instant expiresAt;
     private Instant submittedAt;
+    private Instant completedAt;
     private Instant gradedAt;
     private Integer maxScore;
     private String organizationId;
@@ -120,6 +126,10 @@ public class AssessmentAssignment {
         return submittedCode;
     }
 
+    public Boolean getAutoSubmitted() {
+        return autoSubmitted;
+    }
+
     public String getExecutionStatus() {
         return executionStatus;
     }
@@ -144,8 +154,28 @@ public class AssessmentAssignment {
         return assignedAt;
     }
 
+    public Instant getDueAt() {
+        return dueAt;
+    }
+
+    public Integer getTimeLimitMinutes() {
+        return timeLimitMinutes;
+    }
+
+    public Instant getStartedAt() {
+        return startedAt;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
     public Instant getSubmittedAt() {
         return submittedAt;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
     }
 
     public Instant getGradedAt() {
@@ -228,6 +258,10 @@ public class AssessmentAssignment {
         this.submittedCode = submittedCode;
     }
 
+    public void setAutoSubmitted(Boolean autoSubmitted) {
+        this.autoSubmitted = autoSubmitted;
+    }
+
     public void setExecutionStatus(String executionStatus) {
         this.executionStatus = executionStatus;
     }
@@ -252,8 +286,28 @@ public class AssessmentAssignment {
         this.assignedAt = assignedAt;
     }
 
+    public void setDueAt(Instant dueAt) {
+        this.dueAt = dueAt;
+    }
+
+    public void setTimeLimitMinutes(Integer timeLimitMinutes) {
+        this.timeLimitMinutes = timeLimitMinutes;
+    }
+
+    public void setStartedAt(Instant startedAt) {
+        this.startedAt = startedAt;
+    }
+
+    public void setExpiresAt(Instant expiresAt) {
+        this.expiresAt = expiresAt;
+    }
+
     public void setSubmittedAt(Instant submittedAt) {
         this.submittedAt = submittedAt;
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+        this.completedAt = completedAt;
     }
 
     public void setGradedAt(Instant gradedAt) {
