@@ -34,6 +34,15 @@ public class CodeExecutionService {
     @Value("${code.execution.max-output-size-chars:5000}")
     private int maxOutputSizeChars;
 
+    @Value("${code.execution.memory-limit:128m}")
+    private String memoryLimit;
+
+    @Value("${code.execution.cpu-limit:0.5}")
+    private String cpuLimit;
+
+    @Value("${code.execution.pids-limit:64}")
+    private String pidsLimit;
+
     private static final Set<ProgrammingLanguage> EXECUTABLE_LANGUAGES = EnumSet.of(
             ProgrammingLanguage.JAVA,
             ProgrammingLanguage.JAVASCRIPT,
@@ -249,13 +258,25 @@ public class CodeExecutionService {
         command.add("none");
 
         command.add("--memory");
-        command.add("128m");
+        command.add(memoryLimit);
+
+        command.add("--memory-swap");
+        command.add(memoryLimit);
 
         command.add("--cpus");
-        command.add("0.5");
+        command.add(cpuLimit);
 
         command.add("--pids-limit");
-        command.add("64");
+        command.add(pidsLimit);
+
+        command.add("--cap-drop");
+        command.add("ALL");
+
+        command.add("--security-opt");
+        command.add("no-new-privileges");
+
+        command.add("--ulimit");
+        command.add("nofile=64:64");
 
         command.add("-v");
         command.add(tempDir.toAbsolutePath() + ":/workspace");

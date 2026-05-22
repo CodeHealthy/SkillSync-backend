@@ -2,12 +2,20 @@ package app.SkillSync.service;
 
 import app.SkillSync.dto.AiAssessmentRequest;
 import app.SkillSync.dto.AiAssessmentResponse;
+import app.SkillSync.model.AssessmentQuestion;
+import app.SkillSync.model.AssessmentQuestionOption;
+import app.SkillSync.model.AssessmentSection;
 import app.SkillSync.model.AssessmentTestCase;
+import app.SkillSync.model.ProgrammingLanguage;
+import app.SkillSync.model.QuestionType;
+import app.SkillSync.model.User;
+import app.SkillSync.repository.UserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -15,11 +23,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.springframework.http.HttpStatus.BAD_GATEWAY;
+import static org.springframework.http.HttpStatus.GATEWAY_TIMEOUT;
 import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 
 @Service
@@ -27,6 +37,9 @@ public class AiAssessmentService {
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final BillingService billingService;
+    private final UserRepository userRepository;
+    private final AiBotPromptService aiBotPromptService;
 
     @Value("${ai.features.enabled:false}")
     private boolean aiFeaturesEnabled;
@@ -40,12 +53,28 @@ public class AiAssessmentService {
     @Value("${gemini.timeout-seconds:30}")
     private int timeoutSeconds;
 
-    public AiAssessmentService(ObjectMapper objectMapper) {
+    public AiAssessmentService(
+            ObjectMapper objectMapper,
+            BillingService billingService,
+            UserRepository userRepository,
+            AiBotPromptService aiBotPromptService
+    ) {
         this.objectMapper = objectMapper;
+        this.billingService = billingService;
+        this.userRepository = userRepository;
+        this.aiBotPromptService = aiBotPromptService;
         this.httpClient = HttpClient.newHttpClient();
     }
 
     public AiAssessmentResponse generateAssessment(AiAssessmentRequest request) {
+        User adminUser = getCurrentUser();
+
+        if (adminUser.getOrganizationId() == null || adminUser.getOrganizationId().isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        billingService.ensureCanUseAiGeneration(adminUser.getOrganizationId());
+
         if (!aiFeaturesEnabled) {
             throw new ResponseStatusException(
                     SERVICE_UNAVAILABLE,
@@ -61,7 +90,7 @@ public class AiAssessmentService {
         }
 
         try {
-            String prompt = buildPrompt(request);
+            String prompt = aiBotPromptService.buildAssessmentGeneratorPrompt(request);
             String requestBody = buildGeminiRequestBody(prompt);
 
             HttpRequest httpRequest = HttpRequest.newBuilder()
@@ -115,6 +144,18 @@ public class AiAssessmentService {
 
         } catch (ResponseStatusException ex) {
             throw ex;
+        } catch (HttpTimeoutException ex) {
+            throw new ResponseStatusException(
+                    GATEWAY_TIMEOUT,
+                    "AI generation timed out. Please try again or reduce the draft size."
+            );
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+
+            throw new ResponseStatusException(
+                    SERVICE_UNAVAILABLE,
+                    "AI generation was interrupted. Please try again."
+            );
         } catch (Exception ex) {
             System.out.println("AI generation error: " + ex.getMessage());
 
@@ -148,93 +189,6 @@ public class AiAssessmentService {
         root.set("generationConfig", generationConfig);
 
         return objectMapper.writeValueAsString(root);
-    }
-
-    private String buildPrompt(AiAssessmentRequest request) {
-        boolean codingChallenge = "CODING_CHALLENGE".equalsIgnoreCase(
-                safe(request.getAssessmentType())
-        );
-
-        String codingRules = codingChallenge
-                ? """
-                Coding challenge rules:
-                - Generate a complete runnable program starterCode, not only a function.
-                - The starterCode must read input from stdin.
-                - The candidate program must write final answers to stdout.
-                - Docker grading will run the submitted program once per test case.
-                - Docker grading compares stdout exactly with each test case expectedOutput after trimming whitespace.
-                - expectedOutput must contain ONLY exact stdout text. No explanations, labels, markdown, or sentences.
-                - Generate 4 to 6 test cases.
-                - At least 1 test case must be visible with "hidden": false.
-                - At least 2 test cases should be hidden with "hidden": true.
-                - Test cases should include normal cases and edge cases.
-                - Sum of all testCases points must equal maxScore.
-                - Use simple stdin formats that candidates can reasonably parse.
-                - Do not create interactive prompts such as "Enter a number:".
-                - For Java, starterCode must use public class Main.
-                - For JavaScript, starterCode should read stdin using fs.readFileSync(0, "utf8").
-                - For Python, starterCode should read stdin using sys.stdin.read().
-                - For linked list, tree, array, or object problems, use deterministic stdin and print a deterministic string.
-                """
-                : """
-                Quiz rules:
-                - For QUIZ, starterCode must be an empty string.
-                - For QUIZ, expectedOutput must be an empty string.
-                - For QUIZ, testCases must be an empty array.
-                """;
-
-        return """
-                You are helping an admin create a technical assessment draft for SkillSync.
-
-                Return ONLY valid JSON. Do not include markdown. Do not include explanations outside JSON.
-
-                JSON shape:
-                {
-                  "title": "string",
-                  "description": "string",
-                  "prompt": "string",
-                  "starterCode": "string",
-                  "expectedOutput": "string",
-                  "maxScore": 100,
-                  "rubric": "string",
-                  "testCases": [
-                    {
-                      "name": "string",
-                      "input": "string",
-                      "expectedOutput": "string",
-                      "hidden": false,
-                      "points": 25
-                    }
-                  ]
-                }
-
-                General rules:
-                - The admin must review before saving, so generate a draft only.
-                - Keep the prompt clear, professional, and candidate-facing.
-                - Do not include unsafe, offensive, discriminatory, or biased content.
-                - maxScore should usually be 100.
-                - rubric should explain how the assessment should be reviewed.
-                - Do not include secret answer explanations in the candidate prompt.
-                - Do not mention SkillSync internals, Docker, hidden tests, or exact grading implementation in the candidate prompt.
-
-                %s
-
-                Assessment request:
-                Role/title: %s
-                Skill/topic: %s
-                Difficulty: %s
-                Assessment type: %s
-                Language: %s
-                Extra context/duration: %s
-                """.formatted(
-                codingRules,
-                safe(request.getRoleTitle()),
-                safe(request.getSkillTopic()),
-                safe(request.getDifficulty()),
-                safe(request.getAssessmentType()),
-                safe(request.getLanguage()),
-                safe(request.getContext())
-        );
     }
 
     private String extractOutputText(String responseBody) throws Exception {
@@ -285,11 +239,15 @@ public class AiAssessmentService {
             throw new IllegalStateException("AI response missing title.");
         }
 
+        normalizeResponse(response, request);
+
         if (response.getPrompt() == null || response.getPrompt().isBlank()) {
             throw new IllegalStateException("AI response missing prompt.");
         }
 
-        normalizeResponse(response, request);
+        if (response.getSections() == null || response.getSections().isEmpty()) {
+            throw new IllegalStateException("AI response missing assessment sections.");
+        }
 
         return response;
     }
@@ -298,9 +256,16 @@ public class AiAssessmentService {
             AiAssessmentResponse response,
             AiAssessmentRequest request
     ) {
-        boolean codingChallenge = "CODING_CHALLENGE".equalsIgnoreCase(
-                safe(request.getAssessmentType())
-        );
+        boolean codingChallenge = includesCoding(request);
+
+        response.setRoleTitle(firstPresent(response.getRoleTitle(), request.getRoleTitle()));
+        response.setAssessmentType(codingChallenge ? "CODING_CHALLENGE" : "MCQ");
+        response.setLanguage(codingChallenge ? normalizeLanguage(request.getLanguage()).name() : "TEXT");
+        response.setDurationMinutes(safePositiveInt(
+                response.getDurationMinutes() == null
+                        ? request.getDurationMinutes()
+                        : response.getDurationMinutes()
+        ));
 
         if (response.getDescription() == null) {
             response.setDescription("");
@@ -326,6 +291,8 @@ public class AiAssessmentService {
             response.setStarterCode("");
             response.setExpectedOutput("");
             response.setTestCases(new ArrayList<>());
+            response.setSections(normalizeSections(response, request, false));
+            syncTopLevelFieldsFromSections(response, false);
             return;
         }
 
@@ -365,7 +332,300 @@ public class AiAssessmentService {
                             .findFirst()
                             .orElse(normalizedTestCases.get(0))
                             .getExpectedOutput()
+                );
+        }
+
+        response.setSections(normalizeSections(response, request, true));
+        syncTopLevelFieldsFromSections(response, true);
+    }
+
+    private List<AssessmentSection> normalizeSections(
+            AiAssessmentResponse response,
+            AiAssessmentRequest request,
+            boolean codingChallenge
+    ) {
+        List<AssessmentSection> sections = response.getSections();
+
+        if (sections == null || sections.isEmpty()) {
+            return createFallbackSections(response, request, codingChallenge);
+        }
+
+        List<AssessmentSection> normalizedSections = new ArrayList<>();
+        int sectionIndex = 1;
+
+        for (AssessmentSection section : sections) {
+            if (section == null) {
+                continue;
+            }
+
+            List<AssessmentQuestion> questions = normalizeQuestions(
+                    section.getQuestions(),
+                    response,
+                    request,
+                    codingChallenge
             );
+
+            if (questions.isEmpty()) {
+                continue;
+            }
+
+            AssessmentSection normalizedSection = new AssessmentSection();
+            normalizedSection.setId(firstPresent(section.getId(), "section-" + sectionIndex));
+            normalizedSection.setTitle(firstPresent(section.getTitle(), "Assessment section"));
+            normalizedSection.setDescription(safe(section.getDescription()));
+            normalizedSection.setTimeLimitMinutes(safePositiveInt(section.getTimeLimitMinutes()));
+            normalizedSection.setQuestions(questions);
+
+            normalizedSections.add(normalizedSection);
+            sectionIndex++;
+        }
+
+        if (normalizedSections.isEmpty()) {
+            return createFallbackSections(response, request, codingChallenge);
+        }
+
+        rebalanceQuestionPoints(normalizedSections, response.getMaxScore());
+
+        return normalizedSections;
+    }
+
+    private void rebalanceQuestionPoints(
+            List<AssessmentSection> sections,
+            int maxScore
+    ) {
+        List<AssessmentQuestion> questions = sections.stream()
+                .flatMap(section -> section.getQuestions().stream())
+                .toList();
+
+        if (questions.isEmpty()) {
+            return;
+        }
+
+        int totalPoints = questions.stream()
+                .mapToInt(question -> safeInt(question.getPoints()))
+                .sum();
+
+        if (totalPoints == maxScore) {
+            return;
+        }
+
+        if (totalPoints <= 0 || totalPoints == questions.size() * maxScore) {
+            int basePoints = Math.max(maxScore / questions.size(), 1);
+            int remaining = maxScore;
+
+            for (int index = 0; index < questions.size(); index++) {
+                int points = index == questions.size() - 1
+                        ? remaining
+                        : Math.min(basePoints, remaining);
+
+                questions.get(index).setPoints(points);
+                remaining -= points;
+            }
+
+            return;
+        }
+
+        int remaining = maxScore;
+
+        for (int index = 0; index < questions.size(); index++) {
+            AssessmentQuestion question = questions.get(index);
+            int adjustedPoints;
+
+            if (index == questions.size() - 1) {
+                adjustedPoints = remaining;
+            } else {
+                double ratio = (double) safeInt(question.getPoints()) / totalPoints;
+                adjustedPoints = Math.max(1, (int) Math.round(maxScore * ratio));
+                adjustedPoints = Math.min(adjustedPoints, remaining);
+            }
+
+            question.setPoints(adjustedPoints);
+            remaining -= adjustedPoints;
+        }
+    }
+
+    private List<AssessmentQuestion> normalizeQuestions(
+            List<AssessmentQuestion> questions,
+            AiAssessmentResponse response,
+            AiAssessmentRequest request,
+            boolean codingChallenge
+    ) {
+        List<AssessmentQuestion> normalizedQuestions = new ArrayList<>();
+
+        if (questions == null) {
+            return normalizedQuestions;
+        }
+
+        int questionIndex = 1;
+
+        for (AssessmentQuestion question : questions) {
+            if (question == null || safe(question.getPrompt()).isBlank()) {
+                continue;
+            }
+
+            QuestionType type = question.getType() == null
+                    ? (codingChallenge ? QuestionType.CODING_CHALLENGE : QuestionType.SHORT_ANSWER)
+                    : normalizeQuestionType(question.getType());
+
+            AssessmentQuestion normalizedQuestion = new AssessmentQuestion();
+            normalizedQuestion.setId(firstPresent(question.getId(), "question-" + questionIndex));
+            normalizedQuestion.setType(type);
+            normalizedQuestion.setTitle(firstPresent(question.getTitle(), "Question " + questionIndex));
+            normalizedQuestion.setPrompt(question.getPrompt().trim());
+            normalizedQuestion.setPoints(safePositiveInt(question.getPoints(), response.getMaxScore()));
+
+            if (type == QuestionType.CODING_CHALLENGE) {
+                normalizedQuestion.setLanguage(normalizeLanguage(request.getLanguage()));
+                normalizedQuestion.setStarterCode(firstPresent(
+                        question.getStarterCode(),
+                        response.getStarterCode()
+                ));
+                normalizedQuestion.setExpectedOutput(firstPresent(
+                        question.getExpectedOutput(),
+                        response.getExpectedOutput()
+                ));
+                normalizedQuestion.setCorrectAnswer("");
+                normalizedQuestion.setOptions(new ArrayList<>());
+                normalizedQuestion.setTestCases(normalizeTestCases(
+                        question.getTestCases() == null || question.getTestCases().isEmpty()
+                                ? response.getTestCases()
+                                : question.getTestCases(),
+                        normalizedQuestion.getPoints()
+                ));
+            } else if (type == QuestionType.MULTIPLE_CHOICE) {
+                normalizedQuestion.setLanguage(ProgrammingLanguage.TEXT);
+                normalizedQuestion.setStarterCode("");
+                normalizedQuestion.setExpectedOutput("");
+                normalizedQuestion.setCorrectAnswer("");
+                normalizedQuestion.setOptions(normalizeOptions(question.getOptions()));
+                normalizedQuestion.setTestCases(new ArrayList<>());
+
+                if (normalizedQuestion.getOptions().size() < 2) {
+                    normalizedQuestion.setType(QuestionType.SHORT_ANSWER);
+                    normalizedQuestion.setCorrectAnswer(safe(question.getCorrectAnswer()));
+                    normalizedQuestion.setOptions(new ArrayList<>());
+                }
+            } else {
+                normalizedQuestion.setLanguage(ProgrammingLanguage.TEXT);
+                normalizedQuestion.setStarterCode("");
+                normalizedQuestion.setExpectedOutput("");
+                normalizedQuestion.setCorrectAnswer(safe(question.getCorrectAnswer()));
+                normalizedQuestion.setOptions(new ArrayList<>());
+                normalizedQuestion.setTestCases(new ArrayList<>());
+            }
+
+            normalizedQuestions.add(normalizedQuestion);
+            questionIndex++;
+        }
+
+        return normalizedQuestions;
+    }
+
+    private List<AssessmentQuestionOption> normalizeOptions(List<AssessmentQuestionOption> options) {
+        List<AssessmentQuestionOption> normalizedOptions = new ArrayList<>();
+
+        if (options == null) {
+            return normalizedOptions;
+        }
+
+        int optionIndex = 1;
+        boolean hasCorrect = false;
+
+        for (AssessmentQuestionOption option : options) {
+            if (option == null || safe(option.getText()).isBlank()) {
+                continue;
+            }
+
+            AssessmentQuestionOption normalizedOption = new AssessmentQuestionOption();
+            normalizedOption.setId(firstPresent(option.getId(), "option-" + optionIndex));
+            normalizedOption.setText(option.getText().trim());
+            normalizedOption.setCorrect(Boolean.TRUE.equals(option.getCorrect()));
+
+            hasCorrect = hasCorrect || Boolean.TRUE.equals(normalizedOption.getCorrect());
+            normalizedOptions.add(normalizedOption);
+            optionIndex++;
+        }
+
+        if (!hasCorrect && !normalizedOptions.isEmpty()) {
+            normalizedOptions.get(0).setCorrect(true);
+        }
+
+        return normalizedOptions;
+    }
+
+    private List<AssessmentSection> createFallbackSections(
+            AiAssessmentResponse response,
+            AiAssessmentRequest request,
+            boolean codingChallenge
+    ) {
+        AssessmentQuestion question = new AssessmentQuestion();
+        question.setId("question-1");
+        question.setType(codingChallenge ? QuestionType.CODING_CHALLENGE : QuestionType.SHORT_ANSWER);
+        question.setTitle(firstPresent(response.getTitle(), request.getSkillTopic(), "Generated question"));
+        question.setPrompt(firstPresent(response.getPrompt(), response.getDescription()));
+        question.setPoints(response.getMaxScore());
+
+        if (codingChallenge) {
+            question.setLanguage(normalizeLanguage(request.getLanguage()));
+            question.setStarterCode(safe(response.getStarterCode()));
+            question.setExpectedOutput(safe(response.getExpectedOutput()));
+            question.setCorrectAnswer("");
+            question.setOptions(new ArrayList<>());
+            question.setTestCases(normalizeTestCases(response.getTestCases(), response.getMaxScore()));
+        } else {
+            question.setLanguage(ProgrammingLanguage.TEXT);
+            question.setStarterCode("");
+            question.setExpectedOutput("");
+            question.setCorrectAnswer(safe(response.getRubric()));
+            question.setOptions(new ArrayList<>());
+            question.setTestCases(new ArrayList<>());
+        }
+
+        AssessmentSection section = new AssessmentSection();
+        section.setId("section-1");
+        section.setTitle("AI generated screen");
+        section.setDescription(safe(response.getDescription()));
+        section.setTimeLimitMinutes(safePositiveInt(response.getDurationMinutes()));
+        section.setQuestions(List.of(question));
+
+        return List.of(section);
+    }
+
+    private void syncTopLevelFieldsFromSections(
+            AiAssessmentResponse response,
+            boolean codingChallenge
+    ) {
+        AssessmentQuestion primaryQuestion = response.getSections().stream()
+                .flatMap(section -> section.getQuestions().stream())
+                .filter(question -> codingChallenge
+                        ? question.getType() == QuestionType.CODING_CHALLENGE
+                        : question.getType() != QuestionType.CODING_CHALLENGE)
+                .findFirst()
+                .orElse(null);
+
+        if (primaryQuestion == null) {
+            return;
+        }
+
+        response.setPrompt(firstPresent(response.getPrompt(), primaryQuestion.getPrompt()));
+
+        if (codingChallenge) {
+            response.setStarterCode(firstPresent(response.getStarterCode(), primaryQuestion.getStarterCode()));
+            response.setExpectedOutput(firstPresent(response.getExpectedOutput(), primaryQuestion.getExpectedOutput()));
+            response.setTestCases(primaryQuestion.getTestCases());
+        } else {
+            response.setStarterCode("");
+            response.setExpectedOutput("");
+            response.setTestCases(new ArrayList<>());
+        }
+
+        int totalPoints = response.getSections().stream()
+                .flatMap(section -> section.getQuestions().stream())
+                .mapToInt(question -> safeInt(question.getPoints()))
+                .sum();
+
+        if (totalPoints > 0) {
+            response.setMaxScore(totalPoints);
         }
     }
 
@@ -497,7 +757,60 @@ public class AiAssessmentService {
         return value == null ? 0 : value;
     }
 
+    private Integer safePositiveInt(Integer value) {
+        return value == null || value <= 0 ? null : value;
+    }
+
+    private Integer safePositiveInt(Integer value, Integer fallback) {
+        if (value != null && value > 0) {
+            return value;
+        }
+
+        return fallback != null && fallback > 0 ? fallback : 1;
+    }
+
+    private QuestionType normalizeQuestionType(QuestionType type) {
+        if (type == QuestionType.MULTIPLE_CHOICE
+                || type == QuestionType.SHORT_ANSWER
+                || type == QuestionType.CODING_CHALLENGE) {
+            return type;
+        }
+
+        return QuestionType.SHORT_ANSWER;
+    }
+
+    private ProgrammingLanguage normalizeLanguage(String value) {
+        try {
+            return ProgrammingLanguage.valueOf(safe(value).toUpperCase());
+        } catch (IllegalArgumentException exception) {
+            return ProgrammingLanguage.JAVA;
+        }
+    }
+
+    private String firstPresent(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value.trim();
+            }
+        }
+
+        return "";
+    }
+
+    private boolean includesCoding(AiAssessmentRequest request) {
+        return Boolean.TRUE.equals(request.getIncludeCoding())
+                || "CODING_CHALLENGE".equalsIgnoreCase(safe(request.getAssessmentType()))
+                || "FULL_ASSESSMENT".equalsIgnoreCase(safe(request.getAssessmentType()));
+    }
+
     private String safe(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private User getCurrentUser() {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Authenticated user not found."));
     }
 }

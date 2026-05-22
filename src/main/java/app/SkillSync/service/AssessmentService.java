@@ -5,17 +5,25 @@ import app.SkillSync.dto.AssignmentRunResult;
 import app.SkillSync.dto.CodeExecutionResult;
 import app.SkillSync.dto.CreateAssessmentRequest;
 import app.SkillSync.dto.GradeAssignmentRequest;
+import app.SkillSync.dto.QuestionReviewRequest;
 import app.SkillSync.dto.RunCodeRequest;
 import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.dto.TestCaseRunSummary;
 import app.SkillSync.model.Assessment;
 import app.SkillSync.model.AssessmentAssignment;
+import app.SkillSync.model.AssessmentQuestion;
+import app.SkillSync.model.AssessmentQuestionOption;
+import app.SkillSync.model.AssessmentSection;
+import app.SkillSync.model.AssessmentSectionAttempt;
+import app.SkillSync.model.AssessmentStatus;
 import app.SkillSync.model.AssessmentTestCase;
 import app.SkillSync.model.AssessmentType;
 import app.SkillSync.model.AssignmentStatus;
 import app.SkillSync.model.Candidate;
 import app.SkillSync.model.Organization;
 import app.SkillSync.model.ProgrammingLanguage;
+import app.SkillSync.model.QuestionReview;
+import app.SkillSync.model.QuestionType;
 import app.SkillSync.model.TestCaseExecutionResult;
 import app.SkillSync.model.User;
 import app.SkillSync.repository.AssessmentAssignmentRepository;
@@ -29,7 +37,10 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class AssessmentService {
@@ -42,6 +53,7 @@ public class AssessmentService {
     private final CodeExecutionService codeExecutionService;
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
+    private final BillingService billingService;
 
     public AssessmentService(
             AssessmentRepository assessmentRepository,
@@ -49,7 +61,8 @@ public class AssessmentService {
             CandidateRepository candidateRepository,
             CodeExecutionService codeExecutionService,
             UserRepository userRepository,
-            OrganizationRepository organizationRepository
+            OrganizationRepository organizationRepository,
+            BillingService billingService
     ) {
         this.assessmentRepository = assessmentRepository;
         this.assignmentRepository = assignmentRepository;
@@ -57,6 +70,7 @@ public class AssessmentService {
         this.codeExecutionService = codeExecutionService;
         this.userRepository = userRepository;
         this.organizationRepository = organizationRepository;
+        this.billingService = billingService;
     }
 
     public Assessment createAssessment(CreateAssessmentRequest request) {
@@ -66,24 +80,39 @@ public class AssessmentService {
             throw new RuntimeException("Admin is not linked to an organization.");
         }
 
+        billingService.ensureCanCreateAssessment(adminUser.getOrganizationId());
+
         ProgrammingLanguage resolvedLanguage = resolveLanguage(request);
+        List<AssessmentSection> normalizedSections = normalizeAndValidateSections(request);
+        AssessmentQuestion primaryQuestion = findPrimaryQuestion(normalizedSections);
+        int executableMaxScore = primaryQuestion != null && primaryQuestion.getType() == QuestionType.CODING_CHALLENGE
+                ? safeInt(primaryQuestion.getPoints())
+                : request.getMaxScore();
         List<AssessmentTestCase> normalizedTestCases = normalizeAndValidateTestCases(
-                request.getType(),
-                request.getMaxScore(),
-                request.getExpectedOutput(),
-                request.getTestCases()
+                resolveAssessmentType(request, primaryQuestion),
+                executableMaxScore,
+                primaryQuestion != null ? primaryQuestion.getExpectedOutput() : request.getExpectedOutput(),
+                primaryQuestion != null && primaryQuestion.getTestCases() != null && !primaryQuestion.getTestCases().isEmpty()
+                        ? primaryQuestion.getTestCases()
+                        : request.getTestCases()
         );
 
         Assessment assessment = new Assessment();
         assessment.setTitle(request.getTitle().trim());
         assessment.setDescription(request.getDescription());
-        assessment.setType(request.getType());
-        assessment.setLanguage(resolvedLanguage);
-        assessment.setMaxScore(request.getMaxScore());
-        assessment.setPrompt(request.getPrompt().trim());
-        assessment.setStarterCode(request.getStarterCode());
-        assessment.setExpectedOutput(request.getExpectedOutput());
+        assessment.setRoleTitle(request.getRoleTitle());
+        assessment.setStatus(request.getStatus() == null ? AssessmentStatus.PUBLISHED : request.getStatus());
+        assessment.setType(resolveAssessmentType(request, primaryQuestion));
+        assessment.setLanguage(primaryQuestion != null && primaryQuestion.getLanguage() != null
+                ? primaryQuestion.getLanguage()
+                : resolvedLanguage);
+        assessment.setMaxScore(resolveMaxScore(request, normalizedSections));
+        assessment.setDurationMinutes(request.getDurationMinutes());
+        assessment.setPrompt(primaryQuestion != null ? primaryQuestion.getPrompt() : request.getPrompt().trim());
+        assessment.setStarterCode(primaryQuestion != null ? primaryQuestion.getStarterCode() : request.getStarterCode());
+        assessment.setExpectedOutput(primaryQuestion != null ? primaryQuestion.getExpectedOutput() : request.getExpectedOutput());
         assessment.setTestCases(normalizedTestCases);
+        assessment.setSections(normalizedSections);
         assessment.setCreatedAt(Instant.now());
         assessment.setOrganizationId(adminUser.getOrganizationId());
 
@@ -131,6 +160,10 @@ public class AssessmentService {
             throw new RuntimeException("Assessment does not belong to your organization.");
         }
 
+        if (assessment.getStatus() == AssessmentStatus.DRAFT || assessment.getStatus() == AssessmentStatus.ARCHIVED) {
+            throw new IllegalArgumentException("Only published assessments can be assigned.");
+        }
+
         boolean alreadyAssigned = assignmentRepository.existsByAssessmentIdAndCandidateId(
                 assessment.getId(),
                 candidate.getId()
@@ -144,11 +177,13 @@ public class AssessmentService {
         assignment.setAssessmentId(assessment.getId());
         assignment.setAssessmentTitle(assessment.getTitle());
         assignment.setAssessmentType(assessment.getType());
+        assignment.setAssessmentStatus(assessment.getStatus());
         assignment.setLanguage(assessment.getLanguage());
         assignment.setPrompt(assessment.getPrompt());
         assignment.setStarterCode(assessment.getStarterCode());
         assignment.setExpectedOutput(assessment.getExpectedOutput());
         assignment.setTestCases(copyTestCases(assessment.getTestCases()));
+        assignment.setSections(copySections(assessment.getSections(), false));
         assignment.setMaxScore(assessment.getMaxScore());
 
         assignment.setCandidateId(candidate.getId());
@@ -230,6 +265,63 @@ public class AssessmentService {
         return toCandidateSafeAssignment(assignmentRepository.save(assignment));
     }
 
+    public AssessmentAssignment startAssignmentSection(String assignmentId, String sectionId) {
+        AssessmentAssignment assignment = assignmentRepository.findById(assignmentId)
+                .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
+
+        validateCandidateCanAccessAssignment(assignment);
+        validateAssignmentCanBeWorkedOn(assignment);
+
+        if (assignment.getStatus() != AssignmentStatus.ASSIGNED) {
+            throw new IllegalArgumentException("Only assigned assessments can be worked on");
+        }
+
+        AssessmentSection section = findAssignmentSection(assignment, sectionId);
+        AssessmentSectionAttempt attempt = findSectionAttempt(assignment, section.getId());
+
+        if (attempt == null) {
+            Instant now = Instant.now();
+            attempt = new AssessmentSectionAttempt();
+            attempt.setSectionId(section.getId());
+            attempt.setSectionTitle(section.getTitle());
+            attempt.setTimeLimitMinutes(section.getTimeLimitMinutes());
+            attempt.setStartedAt(now);
+
+            if (section.getTimeLimitMinutes() != null) {
+                attempt.setExpiresAt(now.plus(section.getTimeLimitMinutes(), ChronoUnit.MINUTES));
+            }
+
+            assignment.getSectionAttempts().add(attempt);
+        }
+
+        validateSectionAttemptOpen(attempt, false);
+
+        return toCandidateSafeAssignment(assignmentRepository.save(assignment));
+    }
+
+    public AssessmentAssignment completeAssignmentSection(String assignmentId, String sectionId) {
+        AssessmentAssignment assignment = assignmentRepository.findById(assignmentId)
+                .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
+
+        validateCandidateCanAccessAssignment(assignment);
+        validateAssignmentCanBeWorkedOn(assignment);
+
+        AssessmentSection section = findAssignmentSection(assignment, sectionId);
+        AssessmentSectionAttempt attempt = findSectionAttempt(assignment, section.getId());
+
+        if (attempt == null) {
+            throw new IllegalArgumentException("Start the section before completing it.");
+        }
+
+        validateSectionAttemptOpen(attempt, false);
+
+        if (attempt.getCompletedAt() == null) {
+            attempt.setCompletedAt(Instant.now());
+        }
+
+        return toCandidateSafeAssignment(assignmentRepository.save(assignment));
+    }
+
     public AssessmentAssignment submitAssignment(
             String assignmentId,
             SubmitAssignmentRequest request
@@ -240,6 +332,7 @@ public class AssessmentService {
         validateCandidateCanAccessAssignment(assignment);
         boolean autoSubmitted = Boolean.TRUE.equals(request.getAutoSubmitted());
         validateAssignmentCanBeWorkedOn(assignment, autoSubmitted);
+        validateSubmittedSections(assignment, autoSubmitted);
 
         if (assignment.getStatus() == AssignmentStatus.SUBMITTED || assignment.getStatus() == AssignmentStatus.GRADED) {
             throw new IllegalArgumentException("Assignment has already been submitted");
@@ -253,19 +346,24 @@ public class AssessmentService {
             }
 
             assignment.setSubmittedCode(request.getSubmittedCode().trim());
+            assignment.setSubmittedAnswers(normalizeSubmittedAnswers(request));
             assignment.setSubmittedAnswer(null);
             assignment.setExecutionStatus("PENDING_EXECUTION");
             assignment.setTestCaseResults(new ArrayList<>());
             assignment.setActualOutput(null);
             assignment.setExecutionError(null);
         } else {
-            if (request.getSubmittedAnswer() == null || request.getSubmittedAnswer().trim().isEmpty()) {
+            Map<String, String> submittedAnswers = normalizeSubmittedAnswers(request);
+
+            if (submittedAnswers.isEmpty()) {
                 throw new IllegalArgumentException("Submitted answer is required");
             }
 
-            assignment.setSubmittedAnswer(request.getSubmittedAnswer().trim());
+            assignment.setSubmittedAnswers(submittedAnswers);
+            assignment.setSubmittedAnswer(resolveSubmittedAnswerSummary(submittedAnswers));
             assignment.setSubmittedCode(null);
             assignment.setExecutionStatus("NOT_APPLICABLE");
+            applyAutoScoreForObjectiveQuestions(assignment, submittedAnswers);
         }
 
         assignment.setStatus(AssignmentStatus.SUBMITTED);
@@ -273,6 +371,7 @@ public class AssessmentService {
         Instant submittedAt = Instant.now();
         assignment.setSubmittedAt(submittedAt);
         assignment.setCompletedAt(submittedAt);
+        markOpenSectionAttemptsCompleted(assignment, submittedAt);
 
         AssessmentAssignment savedAssignment = assignmentRepository.save(assignment);
         return toCandidateSafeAssignment(savedAssignment);
@@ -291,8 +390,14 @@ public class AssessmentService {
             throw new IllegalArgumentException("Assignment has not been submitted yet");
         }
 
+        int maxScore = safeInt(assignment.getMaxScore());
+        if (maxScore > 0 && request.getScore() > maxScore) {
+            throw new IllegalArgumentException("Score cannot exceed the assignment max score.");
+        }
+
         assignment.setScore(request.getScore());
         assignment.setFeedback(request.getFeedback());
+        assignment.setQuestionReviews(normalizeQuestionReviews(assignment, request.getQuestionReviews()));
         assignment.setStatus(AssignmentStatus.GRADED);
         assignment.setGradedAt(Instant.now());
 
@@ -325,13 +430,20 @@ public class AssessmentService {
                 false
         );
 
-        int awardedPoints = testCaseResults.stream()
+        int codingAwardedPoints = testCaseResults.stream()
                 .mapToInt(result -> safeInt(result.getAwardedPoints()))
                 .sum();
 
         int totalPoints = testCaseResults.stream()
                 .mapToInt(result -> safeInt(result.getPoints()))
                 .sum();
+
+        int objectiveAwardedPoints = calculateObjectiveScore(
+                assignment,
+                assignment.getSubmittedAnswers()
+        );
+
+        int awardedPoints = codingAwardedPoints + objectiveAwardedPoints;
 
         long passedTests = testCaseResults.stream()
                 .filter(result -> Boolean.TRUE.equals(result.getPassed()))
@@ -369,21 +481,21 @@ public class AssessmentService {
             assignment.setFeedback(
                     "Automatic grading completed with timeout. Passed "
                             + passedTests + "/" + testCaseResults.size()
-                            + " test cases. Score: " + awardedPoints + "/" + totalPoints + "."
+                            + " test cases. Score: " + awardedPoints + "/" + assignment.getMaxScore() + "."
             );
         } else if (anyRuntimeError) {
             assignment.setExecutionStatus("ERROR");
             assignment.setFeedback(
                     "Automatic grading completed with execution errors. Passed "
                             + passedTests + "/" + testCaseResults.size()
-                            + " test cases. Score: " + awardedPoints + "/" + totalPoints + "."
+                            + " test cases. Score: " + awardedPoints + "/" + assignment.getMaxScore() + "."
             );
         } else {
             assignment.setExecutionStatus("FAILED");
             assignment.setFeedback(
                     "Automatic grading completed. Passed "
                             + passedTests + "/" + testCaseResults.size()
-                            + " test cases. Score: " + awardedPoints + "/" + totalPoints + "."
+                            + " test cases. Score: " + awardedPoints + "/" + assignment.getMaxScore() + "."
             );
         }
 
@@ -411,6 +523,8 @@ public class AssessmentService {
         if (request.getSourceCode() == null || request.getSourceCode().trim().isEmpty()) {
             throw new IllegalArgumentException("Source code is required");
         }
+
+        validateCodingSectionOpen(assignment);
 
         List<AssessmentTestCase> visibleTestCases = getExecutableTestCasesForAssignment(assignment)
                 .stream()
@@ -530,6 +644,7 @@ public class AssessmentService {
         safe.setExpectedOutput(null);
         safe.setTestCases(maskHiddenTestCases(safe.getTestCases()));
         safe.setTestCaseResults(maskHiddenExecutionResults(safe.getTestCaseResults()));
+        safe.setQuestionReviews(new ArrayList<>());
 
         return safe;
     }
@@ -547,12 +662,18 @@ public class AssessmentService {
         target.setExpectedOutput(source.getExpectedOutput());
         target.setTestCases(copyTestCases(source.getTestCases()));
         target.setTestCaseResults(copyExecutionResults(source.getTestCaseResults()));
+        target.setQuestionReviews(copyQuestionReviews(source.getQuestionReviews()));
+        target.setSectionAttempts(copySectionAttempts(source.getSectionAttempts()));
+        target.setSections(copySections(source.getSections(), true));
         target.setCandidateId(source.getCandidateId());
         target.setCandidateName(source.getCandidateName());
         target.setCandidateEmail(source.getCandidateEmail());
         target.setStatus(source.getStatus());
         target.setSubmittedAnswer(source.getSubmittedAnswer());
         target.setSubmittedCode(source.getSubmittedCode());
+        target.setSubmittedAnswers(source.getSubmittedAnswers() == null
+                ? new HashMap<>()
+                : new HashMap<>(source.getSubmittedAnswers()));
         target.setAutoSubmitted(source.getAutoSubmitted());
         target.setExecutionStatus(source.getExecutionStatus());
         target.setActualOutput(source.getActualOutput());
@@ -572,6 +693,81 @@ public class AssessmentService {
         target.setOrganizationName(source.getOrganizationName());
 
         return target;
+    }
+
+    private List<AssessmentSectionAttempt> copySectionAttempts(List<AssessmentSectionAttempt> sectionAttempts) {
+        if (sectionAttempts == null) {
+            return new ArrayList<>();
+        }
+
+        return sectionAttempts.stream()
+                .map(source -> {
+                    AssessmentSectionAttempt copy = new AssessmentSectionAttempt();
+                    copy.setSectionId(source.getSectionId());
+                    copy.setSectionTitle(source.getSectionTitle());
+                    copy.setTimeLimitMinutes(source.getTimeLimitMinutes());
+                    copy.setStartedAt(source.getStartedAt());
+                    copy.setExpiresAt(source.getExpiresAt());
+                    copy.setCompletedAt(source.getCompletedAt());
+                    return copy;
+                })
+                .toList();
+    }
+
+    private List<QuestionReview> normalizeQuestionReviews(
+            AssessmentAssignment assignment,
+            List<QuestionReviewRequest> requestedReviews
+    ) {
+        if (requestedReviews == null || requestedReviews.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        Map<String, AssessmentQuestion> questionsById = new HashMap<>();
+
+        if (assignment.getSections() != null) {
+            assignment.getSections().stream()
+                    .flatMap(section -> section.getQuestions() == null
+                            ? List.<AssessmentQuestion>of().stream()
+                            : section.getQuestions().stream())
+                    .forEach(question -> questionsById.put(question.getId(), question));
+        }
+
+        List<QuestionReview> normalizedReviews = new ArrayList<>();
+
+        for (QuestionReviewRequest requestedReview : requestedReviews) {
+            if (requestedReview == null ||
+                    requestedReview.getQuestionId() == null ||
+                    requestedReview.getQuestionId().trim().isEmpty()) {
+                continue;
+            }
+
+            AssessmentQuestion question = questionsById.get(requestedReview.getQuestionId());
+            int maxPoints = question != null
+                    ? safeInt(question.getPoints())
+                    : Math.max(safeInt(requestedReview.getMaxPoints()), 0);
+            int awardedPoints = Math.max(safeInt(requestedReview.getAwardedPoints()), 0);
+
+            if (maxPoints > 0 && awardedPoints > maxPoints) {
+                throw new IllegalArgumentException("Question review points cannot exceed question max points.");
+            }
+
+            QuestionReview normalizedReview = new QuestionReview();
+            normalizedReview.setQuestionId(requestedReview.getQuestionId().trim());
+            normalizedReview.setQuestionTitle(question != null
+                    ? question.getTitle()
+                    : safeString(requestedReview.getQuestionTitle()).trim());
+            normalizedReview.setQuestionType(question != null
+                    ? question.getType()
+                    : requestedReview.getQuestionType());
+            normalizedReview.setMaxPoints(maxPoints);
+            normalizedReview.setAwardedPoints(awardedPoints);
+            normalizedReview.setNotes(safeString(requestedReview.getNotes()).trim());
+            normalizedReview.setReviewed(Boolean.TRUE.equals(requestedReview.getReviewed()));
+
+            normalizedReviews.add(normalizedReview);
+        }
+
+        return normalizedReviews;
     }
 
     private List<AssessmentTestCase> normalizeAndValidateTestCases(
@@ -645,6 +841,215 @@ public class AssessmentService {
         }
 
         return normalized;
+    }
+
+    private List<AssessmentSection> normalizeAndValidateSections(CreateAssessmentRequest request) {
+        List<AssessmentSection> sourceSections = request.getSections();
+
+        if (sourceSections == null || sourceSections.isEmpty()) {
+            AssessmentQuestion legacyQuestion = new AssessmentQuestion();
+            legacyQuestion.setId(UUID.randomUUID().toString());
+            legacyQuestion.setType(toQuestionType(request.getType()));
+            legacyQuestion.setTitle(request.getTitle());
+            legacyQuestion.setPrompt(request.getPrompt());
+            legacyQuestion.setPoints(request.getMaxScore());
+            legacyQuestion.setLanguage(resolveLanguage(request));
+            legacyQuestion.setStarterCode(request.getStarterCode());
+            legacyQuestion.setExpectedOutput(request.getExpectedOutput());
+            legacyQuestion.setTestCases(request.getTestCases());
+
+            AssessmentSection legacySection = new AssessmentSection();
+            legacySection.setId(UUID.randomUUID().toString());
+            legacySection.setTitle("Assessment");
+            legacySection.setDescription(request.getDescription());
+            legacySection.setTimeLimitMinutes(request.getDurationMinutes());
+            legacySection.setQuestions(List.of(legacyQuestion));
+
+            sourceSections = List.of(legacySection);
+        }
+
+        List<AssessmentSection> normalizedSections = new ArrayList<>();
+
+        for (int sectionIndex = 0; sectionIndex < sourceSections.size(); sectionIndex++) {
+            AssessmentSection sourceSection = sourceSections.get(sectionIndex);
+
+            if (sourceSection == null) {
+                continue;
+            }
+
+            List<AssessmentQuestion> questions = normalizeQuestions(sourceSection.getQuestions(), sectionIndex);
+
+            if (questions.isEmpty()) {
+                continue;
+            }
+
+            AssessmentSection section = new AssessmentSection();
+            section.setId(defaultId(sourceSection.getId()));
+            section.setTitle(defaultSectionTitle(sourceSection.getTitle(), sectionIndex + 1));
+            section.setDescription(sourceSection.getDescription());
+            section.setTimeLimitMinutes(sourceSection.getTimeLimitMinutes());
+            section.setQuestions(questions);
+
+            normalizedSections.add(section);
+        }
+
+        if (normalizedSections.isEmpty()) {
+            throw new IllegalArgumentException("At least one section with one question is required.");
+        }
+
+        return normalizedSections;
+    }
+
+    private List<AssessmentQuestion> normalizeQuestions(
+            List<AssessmentQuestion> sourceQuestions,
+            int sectionIndex
+    ) {
+        if (sourceQuestions == null) {
+            return List.of();
+        }
+
+        List<AssessmentQuestion> normalizedQuestions = new ArrayList<>();
+
+        for (int questionIndex = 0; questionIndex < sourceQuestions.size(); questionIndex++) {
+            AssessmentQuestion sourceQuestion = sourceQuestions.get(questionIndex);
+
+            if (sourceQuestion == null || sourceQuestion.getPrompt() == null || sourceQuestion.getPrompt().trim().isEmpty()) {
+                continue;
+            }
+
+            QuestionType type = sourceQuestion.getType() == null
+                    ? QuestionType.SHORT_ANSWER
+                    : sourceQuestion.getType();
+
+            AssessmentQuestion question = new AssessmentQuestion();
+            question.setId(defaultId(sourceQuestion.getId()));
+            question.setType(type);
+            question.setTitle(defaultQuestionTitle(sourceQuestion, sectionIndex, questionIndex));
+            question.setPrompt(sourceQuestion.getPrompt().trim());
+            question.setPoints(Math.max(safeInt(sourceQuestion.getPoints()), 1));
+            question.setLanguage(resolveQuestionLanguage(type, sourceQuestion.getLanguage()));
+            question.setStarterCode(sourceQuestion.getStarterCode());
+            question.setExpectedOutput(sourceQuestion.getExpectedOutput());
+            question.setCorrectAnswer(sourceQuestion.getCorrectAnswer());
+            question.setOptions(normalizeOptions(type, sourceQuestion.getOptions()));
+
+            if (type == QuestionType.CODING_CHALLENGE) {
+                question.setTestCases(normalizeAndValidateTestCases(
+                        AssessmentType.CODING_CHALLENGE,
+                        safeInt(question.getPoints()),
+                        sourceQuestion.getExpectedOutput(),
+                        sourceQuestion.getTestCases()
+                ));
+            } else {
+                question.setTestCases(new ArrayList<>());
+            }
+
+            normalizedQuestions.add(question);
+        }
+
+        return normalizedQuestions;
+    }
+
+    private List<AssessmentQuestionOption> normalizeOptions(
+            QuestionType type,
+            List<AssessmentQuestionOption> options
+    ) {
+        if (type != QuestionType.MULTIPLE_CHOICE) {
+            return new ArrayList<>();
+        }
+
+        if (options == null || options.size() < 2) {
+            throw new IllegalArgumentException("Multiple choice questions require at least two options.");
+        }
+
+        List<AssessmentQuestionOption> normalizedOptions = new ArrayList<>();
+        int correctCount = 0;
+
+        for (AssessmentQuestionOption sourceOption : options) {
+            if (sourceOption == null || sourceOption.getText() == null || sourceOption.getText().trim().isEmpty()) {
+                continue;
+            }
+
+            AssessmentQuestionOption option = new AssessmentQuestionOption();
+            option.setId(defaultId(sourceOption.getId()));
+            option.setText(sourceOption.getText().trim());
+            option.setCorrect(Boolean.TRUE.equals(sourceOption.getCorrect()));
+
+            if (Boolean.TRUE.equals(option.getCorrect())) {
+                correctCount++;
+            }
+
+            normalizedOptions.add(option);
+        }
+
+        if (normalizedOptions.size() < 2) {
+            throw new IllegalArgumentException("Multiple choice questions require at least two valid options.");
+        }
+
+        if (correctCount != 1) {
+            throw new IllegalArgumentException("Multiple choice questions require exactly one correct option.");
+        }
+
+        return normalizedOptions;
+    }
+
+    private AssessmentQuestion findPrimaryQuestion(List<AssessmentSection> sections) {
+        if (sections == null) {
+            return null;
+        }
+
+        return sections.stream()
+                .flatMap(section -> section.getQuestions().stream())
+                .filter(question -> question.getType() == QuestionType.CODING_CHALLENGE)
+                .findFirst()
+                .or(() -> sections.stream()
+                        .flatMap(section -> section.getQuestions().stream())
+                        .findFirst())
+                .orElse(null);
+    }
+
+    private AssessmentType resolveAssessmentType(
+            CreateAssessmentRequest request,
+            AssessmentQuestion primaryQuestion
+    ) {
+        if (primaryQuestion != null && primaryQuestion.getType() == QuestionType.CODING_CHALLENGE) {
+            return AssessmentType.CODING_CHALLENGE;
+        }
+
+        return request.getType() == null || request.getType() == AssessmentType.QUIZ
+                ? AssessmentType.MCQ
+                : request.getType();
+    }
+
+    private int resolveMaxScore(
+            CreateAssessmentRequest request,
+            List<AssessmentSection> sections
+    ) {
+        int total = sections.stream()
+                .flatMap(section -> section.getQuestions().stream())
+                .mapToInt(question -> safeInt(question.getPoints()))
+                .sum();
+
+        return total > 0 ? total : request.getMaxScore();
+    }
+
+    private QuestionType toQuestionType(AssessmentType type) {
+        return type == AssessmentType.CODING_CHALLENGE
+                ? QuestionType.CODING_CHALLENGE
+                : QuestionType.SHORT_ANSWER;
+    }
+
+    private ProgrammingLanguage resolveQuestionLanguage(
+            QuestionType type,
+            ProgrammingLanguage language
+    ) {
+        if (type != QuestionType.CODING_CHALLENGE) {
+            return ProgrammingLanguage.TEXT;
+        }
+
+        return language == null || language == ProgrammingLanguage.TEXT
+                ? ProgrammingLanguage.JAVA
+                : language;
     }
 
     private void distributePoints(List<AssessmentTestCase> testCases, int maxScore) {
@@ -740,6 +1145,81 @@ public class AssessmentService {
                 .toList();
     }
 
+    private List<AssessmentSection> copySections(
+            List<AssessmentSection> sections,
+            boolean candidateView
+    ) {
+        if (sections == null) {
+            return new ArrayList<>();
+        }
+
+        return sections.stream()
+                .map(section -> copySection(section, candidateView))
+                .toList();
+    }
+
+    private AssessmentSection copySection(
+            AssessmentSection source,
+            boolean candidateView
+    ) {
+        AssessmentSection copy = new AssessmentSection();
+        copy.setId(source.getId());
+        copy.setTitle(source.getTitle());
+        copy.setDescription(source.getDescription());
+        copy.setTimeLimitMinutes(source.getTimeLimitMinutes());
+        copy.setQuestions(
+                source.getQuestions() == null
+                        ? new ArrayList<>()
+                        : source.getQuestions()
+                                .stream()
+                                .map(question -> copyQuestion(question, candidateView))
+                                .toList()
+        );
+
+        return copy;
+    }
+
+    private AssessmentQuestion copyQuestion(
+            AssessmentQuestion source,
+            boolean candidateView
+    ) {
+        AssessmentQuestion copy = new AssessmentQuestion();
+        copy.setId(source.getId());
+        copy.setType(source.getType());
+        copy.setTitle(source.getTitle());
+        copy.setPrompt(source.getPrompt());
+        copy.setPoints(source.getPoints());
+        copy.setLanguage(source.getLanguage());
+        copy.setStarterCode(source.getStarterCode());
+        copy.setExpectedOutput(candidateView ? null : source.getExpectedOutput());
+        copy.setCorrectAnswer(candidateView ? null : source.getCorrectAnswer());
+        copy.setOptions(copyOptions(source.getOptions(), candidateView));
+        copy.setTestCases(candidateView
+                ? maskHiddenTestCases(source.getTestCases())
+                : copyTestCases(source.getTestCases()));
+
+        return copy;
+    }
+
+    private List<AssessmentQuestionOption> copyOptions(
+            List<AssessmentQuestionOption> options,
+            boolean candidateView
+    ) {
+        if (options == null) {
+            return new ArrayList<>();
+        }
+
+        return options.stream()
+                .map(source -> {
+                    AssessmentQuestionOption copy = new AssessmentQuestionOption();
+                    copy.setId(source.getId());
+                    copy.setText(source.getText());
+                    copy.setCorrect(candidateView ? null : source.getCorrect());
+                    return copy;
+                })
+                .toList();
+    }
+
     private AssessmentTestCase copyTestCase(AssessmentTestCase source) {
         AssessmentTestCase copy = new AssessmentTestCase();
 
@@ -759,6 +1239,26 @@ public class AssessmentService {
 
         return results.stream()
                 .map(this::copyExecutionResult)
+                .toList();
+    }
+
+    private List<QuestionReview> copyQuestionReviews(List<QuestionReview> questionReviews) {
+        if (questionReviews == null) {
+            return new ArrayList<>();
+        }
+
+        return questionReviews.stream()
+                .map(source -> {
+                    QuestionReview copy = new QuestionReview();
+                    copy.setQuestionId(source.getQuestionId());
+                    copy.setQuestionTitle(source.getQuestionTitle());
+                    copy.setQuestionType(source.getQuestionType());
+                    copy.setMaxPoints(source.getMaxPoints());
+                    copy.setAwardedPoints(source.getAwardedPoints());
+                    copy.setNotes(source.getNotes());
+                    copy.setReviewed(source.getReviewed());
+                    return copy;
+                })
                 .toList();
     }
 
@@ -819,7 +1319,7 @@ public class AssessmentService {
     }
 
     private ProgrammingLanguage resolveLanguage(CreateAssessmentRequest request) {
-        if (request.getType() == AssessmentType.QUIZ) {
+        if (request.getType() == AssessmentType.QUIZ || request.getType() == AssessmentType.MCQ) {
             return ProgrammingLanguage.TEXT;
         }
 
@@ -876,6 +1376,127 @@ public class AssessmentService {
         }
     }
 
+    private void validateCodingSectionOpen(AssessmentAssignment assignment) {
+        AssessmentSection codingSection = findCodingSection(assignment);
+
+        if (codingSection == null) {
+            return;
+        }
+
+        AssessmentSectionAttempt attempt = findSectionAttempt(assignment, codingSection.getId());
+
+        if (attempt == null) {
+            throw new IllegalArgumentException("Start the coding section before running code.");
+        }
+
+        validateSectionAttemptOpen(attempt, false);
+    }
+
+    private void validateSubmittedSections(AssessmentAssignment assignment, boolean allowAutoSubmitGrace) {
+        if (assignment.getSections() == null || assignment.getSections().isEmpty()) {
+            return;
+        }
+
+        List<AssessmentSection> sections = getAssignmentSectionsOrLegacySection(assignment);
+
+        if (sections.isEmpty()) {
+            return;
+        }
+
+        for (AssessmentSection section : sections) {
+            AssessmentSectionAttempt attempt = findSectionAttempt(assignment, section.getId());
+
+            if (attempt == null) {
+                throw new IllegalArgumentException("Start every section before submitting the assessment.");
+            }
+
+            validateSectionAttemptOpen(attempt, allowAutoSubmitGrace);
+        }
+    }
+
+    private void validateSectionAttemptOpen(
+            AssessmentSectionAttempt attempt,
+            boolean allowAutoSubmitGrace
+    ) {
+        if (attempt.getExpiresAt() == null) {
+            return;
+        }
+
+        Instant now = Instant.now();
+        Instant effectiveEnd = attempt.getCompletedAt() != null ? attempt.getCompletedAt() : now;
+
+        if (effectiveEnd.isAfter(attempt.getExpiresAt()) &&
+                !(allowAutoSubmitGrace &&
+                        !effectiveEnd.isAfter(attempt.getExpiresAt().plus(AUTO_SUBMIT_GRACE_SECONDS, ChronoUnit.SECONDS)))) {
+            throw new IllegalArgumentException("Section time limit has expired.");
+        }
+    }
+
+    private void markOpenSectionAttemptsCompleted(AssessmentAssignment assignment, Instant completedAt) {
+        if (assignment.getSectionAttempts() == null) {
+            return;
+        }
+
+        assignment.getSectionAttempts().stream()
+                .filter(attempt -> attempt.getCompletedAt() == null)
+                .forEach(attempt -> attempt.setCompletedAt(completedAt));
+    }
+
+    private AssessmentSection findAssignmentSection(AssessmentAssignment assignment, String sectionId) {
+        return getAssignmentSectionsOrLegacySection(assignment)
+                .stream()
+                .filter(section -> section.getId().equals(sectionId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Assessment section not found."));
+    }
+
+    private AssessmentSection findCodingSection(AssessmentAssignment assignment) {
+        return getAssignmentSectionsOrLegacySection(assignment)
+                .stream()
+                .filter(section -> section.getQuestions() != null &&
+                        section.getQuestions().stream()
+                                .anyMatch(question -> question.getType() == QuestionType.CODING_CHALLENGE))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private AssessmentSectionAttempt findSectionAttempt(AssessmentAssignment assignment, String sectionId) {
+        if (assignment.getSectionAttempts() == null) {
+            assignment.setSectionAttempts(new ArrayList<>());
+        }
+
+        return assignment.getSectionAttempts()
+                .stream()
+                .filter(attempt -> sectionId.equals(attempt.getSectionId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private List<AssessmentSection> getAssignmentSectionsOrLegacySection(AssessmentAssignment assignment) {
+        if (assignment.getSections() != null && !assignment.getSections().isEmpty()) {
+            return assignment.getSections();
+        }
+
+        AssessmentSection legacySection = new AssessmentSection();
+        legacySection.setId("legacy-section");
+        legacySection.setTitle("Assessment");
+        legacySection.setDescription(assignment.getPrompt());
+        legacySection.setTimeLimitMinutes(assignment.getTimeLimitMinutes());
+
+        AssessmentQuestion legacyQuestion = new AssessmentQuestion();
+        legacyQuestion.setId("legacy-question");
+        legacyQuestion.setType(assignment.getAssessmentType() == AssessmentType.CODING_CHALLENGE
+                ? QuestionType.CODING_CHALLENGE
+                : QuestionType.SHORT_ANSWER);
+        legacyQuestion.setTitle(assignment.getAssessmentTitle());
+        legacyQuestion.setPrompt(assignment.getPrompt());
+        legacyQuestion.setPoints(assignment.getMaxScore());
+        legacyQuestion.setLanguage(assignment.getLanguage());
+
+        legacySection.setQuestions(List.of(legacyQuestion));
+        return List.of(legacySection);
+    }
+
     private boolean isWithinAutoSubmitGrace(
             AssessmentAssignment assignment,
             Instant now,
@@ -912,12 +1533,144 @@ public class AssessmentService {
                 .orElseThrow(() -> new RuntimeException("Authenticated user not found."));
     }
 
+    private Map<String, String> normalizeSubmittedAnswers(SubmitAssignmentRequest request) {
+        Map<String, String> normalized = new HashMap<>();
+
+        if (request.getSubmittedAnswers() != null) {
+            request.getSubmittedAnswers().forEach((questionId, answer) -> {
+                if (questionId != null && answer != null && !answer.trim().isEmpty()) {
+                    normalized.put(questionId, answer.trim());
+                }
+            });
+        }
+
+        if (normalized.isEmpty() &&
+                request.getSubmittedAnswer() != null &&
+                !request.getSubmittedAnswer().trim().isEmpty()) {
+            normalized.put("legacy-answer", request.getSubmittedAnswer().trim());
+        }
+
+        return normalized;
+    }
+
+    private String resolveSubmittedAnswerSummary(Map<String, String> submittedAnswers) {
+        if (submittedAnswers == null || submittedAnswers.isEmpty()) {
+            return null;
+        }
+
+        if (submittedAnswers.size() == 1) {
+            return submittedAnswers.values().iterator().next();
+        }
+
+        StringBuilder builder = new StringBuilder();
+
+        submittedAnswers.forEach((questionId, answer) ->
+                builder.append(questionId).append(": ").append(answer).append("\n")
+        );
+
+        return builder.toString().trim();
+    }
+
+    private void applyAutoScoreForObjectiveQuestions(
+            AssessmentAssignment assignment,
+            Map<String, String> submittedAnswers
+    ) {
+        int score = calculateObjectiveScore(assignment, submittedAnswers);
+
+        if (!hasObjectiveQuestions(assignment)) {
+            return;
+        }
+
+        assignment.setScore(score);
+        assignment.setFeedback("Multiple choice questions were scored automatically. Short-answer responses still require review.");
+    }
+
+    private int calculateObjectiveScore(
+            AssessmentAssignment assignment,
+            Map<String, String> submittedAnswers
+    ) {
+        List<AssessmentQuestion> questions = assignment.getSections() == null
+                ? List.of()
+                : assignment.getSections()
+                        .stream()
+                        .flatMap(section -> section.getQuestions() == null
+                                ? List.<AssessmentQuestion>of().stream()
+                                : section.getQuestions().stream())
+                        .toList();
+
+        List<AssessmentQuestion> multipleChoiceQuestions = questions.stream()
+                .filter(question -> question.getType() == QuestionType.MULTIPLE_CHOICE)
+                .toList();
+
+        if (multipleChoiceQuestions.isEmpty()) {
+            return 0;
+        }
+
+        int score = 0;
+
+        for (AssessmentQuestion question : multipleChoiceQuestions) {
+            String submittedOptionId = submittedAnswers.get(question.getId());
+
+            boolean correct = question.getOptions() != null &&
+                    question.getOptions().stream()
+                            .anyMatch(option ->
+                                    Boolean.TRUE.equals(option.getCorrect()) &&
+                                            option.getId().equals(submittedOptionId)
+                            );
+
+            if (correct) {
+                score += safeInt(question.getPoints());
+            }
+        }
+
+        return score;
+    }
+
+    private boolean hasObjectiveQuestions(AssessmentAssignment assignment) {
+        if (assignment.getSections() == null) {
+            return false;
+        }
+
+        return assignment.getSections()
+                .stream()
+                .flatMap(section -> section.getQuestions() == null
+                        ? List.<AssessmentQuestion>of().stream()
+                        : section.getQuestions().stream())
+                .anyMatch(question -> question.getType() == QuestionType.MULTIPLE_CHOICE);
+    }
+
     private String defaultName(String value, int index) {
         if (value == null || value.trim().isEmpty()) {
             return "Test case " + index;
         }
 
         return value.trim();
+    }
+
+    private String defaultQuestionTitle(
+            AssessmentQuestion question,
+            int sectionIndex,
+            int questionIndex
+    ) {
+        if (question.getTitle() != null && !question.getTitle().trim().isEmpty()) {
+            return question.getTitle().trim();
+        }
+
+        return "Question " + (sectionIndex + 1) + "." + (questionIndex + 1);
+    }
+
+    private String defaultSectionTitle(String value, int index) {
+        if (value == null || value.trim().isEmpty()) {
+            return "Section " + index;
+        }
+
+        return value.trim();
+    }
+
+    private String defaultId(String value) {
+        return value == null || value.trim().isEmpty()
+                ? UUID.randomUUID().toString()
+                : value.trim();
     }
 
     private String safeString(String value) {

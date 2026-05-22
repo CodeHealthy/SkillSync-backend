@@ -19,7 +19,7 @@ public class AiAssessmentRequest {
     private String difficulty;
 
     @NotBlank
-    @Pattern(regexp = "QUIZ|CODING_CHALLENGE")
+    @Pattern(regexp = "MCQ|CODING_CHALLENGE|FULL_ASSESSMENT")
     private String assessmentType;
 
     @Size(max = 30)
@@ -27,6 +27,12 @@ public class AiAssessmentRequest {
 
     @Size(max = 500)
     private String context;
+
+    private Boolean includeCoding;
+    private Boolean includeMultipleChoice;
+    private Boolean includeShortAnswer;
+    private Integer questionCount;
+    private Integer durationMinutes;
 
     public String getRoleTitle() {
         return roleTitle;
@@ -74,5 +80,45 @@ public class AiAssessmentRequest {
 
     public void setContext(String context) {
         this.context = context;
+    }
+
+    public Boolean getIncludeCoding() {
+        return includeCoding;
+    }
+
+    public void setIncludeCoding(Boolean includeCoding) {
+        this.includeCoding = includeCoding;
+    }
+
+    public Boolean getIncludeMultipleChoice() {
+        return includeMultipleChoice;
+    }
+
+    public void setIncludeMultipleChoice(Boolean includeMultipleChoice) {
+        this.includeMultipleChoice = includeMultipleChoice;
+    }
+
+    public Boolean getIncludeShortAnswer() {
+        return includeShortAnswer;
+    }
+
+    public void setIncludeShortAnswer(Boolean includeShortAnswer) {
+        this.includeShortAnswer = includeShortAnswer;
+    }
+
+    public Integer getQuestionCount() {
+        return questionCount;
+    }
+
+    public void setQuestionCount(Integer questionCount) {
+        this.questionCount = questionCount;
+    }
+
+    public Integer getDurationMinutes() {
+        return durationMinutes;
+    }
+
+    public void setDurationMinutes(Integer durationMinutes) {
+        this.durationMinutes = durationMinutes;
     }
 }

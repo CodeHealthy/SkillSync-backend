@@ -16,6 +16,7 @@ public class AssessmentAssignment {
     private String assessmentId;
     private String assessmentTitle;
     private AssessmentType assessmentType;
+    private AssessmentStatus assessmentStatus;
     private ProgrammingLanguage language;
 
     private String prompt;
@@ -28,7 +29,10 @@ public class AssessmentAssignment {
     private String expectedOutput;
 
     private List<AssessmentTestCase> testCases = new ArrayList<>();
+    private List<AssessmentSection> sections = new ArrayList<>();
     private List<TestCaseExecutionResult> testCaseResults = new ArrayList<>();
+    private List<QuestionReview> questionReviews = new ArrayList<>();
+    private List<AssessmentSectionAttempt> sectionAttempts = new ArrayList<>();
 
     private String candidateId;
     private String candidateName;
@@ -38,6 +42,7 @@ public class AssessmentAssignment {
 
     private String submittedAnswer;
     private String submittedCode;
+    private java.util.Map<String, String> submittedAnswers = new java.util.HashMap<>();
     private Boolean autoSubmitted;
 
     private String executionStatus;
@@ -78,6 +83,10 @@ public class AssessmentAssignment {
         return assessmentType;
     }
 
+    public AssessmentStatus getAssessmentStatus() {
+        return assessmentStatus;
+    }
+
     public ProgrammingLanguage getLanguage() {
         return language;
     }
@@ -98,8 +107,20 @@ public class AssessmentAssignment {
         return testCases;
     }
 
+    public List<AssessmentSection> getSections() {
+        return sections;
+    }
+
     public List<TestCaseExecutionResult> getTestCaseResults() {
         return testCaseResults;
+    }
+
+    public List<QuestionReview> getQuestionReviews() {
+        return questionReviews;
+    }
+
+    public List<AssessmentSectionAttempt> getSectionAttempts() {
+        return sectionAttempts;
     }
 
     public String getCandidateId() {
@@ -124,6 +145,10 @@ public class AssessmentAssignment {
 
     public String getSubmittedCode() {
         return submittedCode;
+    }
+
+    public java.util.Map<String, String> getSubmittedAnswers() {
+        return submittedAnswers;
     }
 
     public Boolean getAutoSubmitted() {
@@ -210,6 +235,10 @@ public class AssessmentAssignment {
         this.assessmentType = assessmentType;
     }
 
+    public void setAssessmentStatus(AssessmentStatus assessmentStatus) {
+        this.assessmentStatus = assessmentStatus;
+    }
+
     public void setLanguage(ProgrammingLanguage language) {
         this.language = language;
     }
@@ -230,8 +259,20 @@ public class AssessmentAssignment {
         this.testCases = testCases == null ? new ArrayList<>() : testCases;
     }
 
+    public void setSections(List<AssessmentSection> sections) {
+        this.sections = sections == null ? new ArrayList<>() : sections;
+    }
+
     public void setTestCaseResults(List<TestCaseExecutionResult> testCaseResults) {
         this.testCaseResults = testCaseResults == null ? new ArrayList<>() : testCaseResults;
+    }
+
+    public void setQuestionReviews(List<QuestionReview> questionReviews) {
+        this.questionReviews = questionReviews == null ? new ArrayList<>() : questionReviews;
+    }
+
+    public void setSectionAttempts(List<AssessmentSectionAttempt> sectionAttempts) {
+        this.sectionAttempts = sectionAttempts == null ? new ArrayList<>() : sectionAttempts;
     }
 
     public void setCandidateId(String candidateId) {
@@ -256,6 +297,10 @@ public class AssessmentAssignment {
 
     public void setSubmittedCode(String submittedCode) {
         this.submittedCode = submittedCode;
+    }
+
+    public void setSubmittedAnswers(java.util.Map<String, String> submittedAnswers) {
+        this.submittedAnswers = submittedAnswers == null ? new java.util.HashMap<>() : submittedAnswers;
     }
 
     public void setAutoSubmitted(Boolean autoSubmitted) {

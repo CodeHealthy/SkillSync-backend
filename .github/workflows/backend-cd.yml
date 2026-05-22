@@ -72,6 +72,12 @@ jobs:
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY}}
             GEMINI_MODEL=${{ secrets.GEMINI_MODEL}}
             GEMINI_TIMEOUT_SECONDS=${{ secrets.GEMINI_TIMEOUT_SECONDS}}
+            BILLING_ENABLED=${{ secrets.BILLING_ENABLED}}
+            STRIPE_API_KEY=${{ secrets.STRIPE_API_KEY}}
+            STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET}}
+            STRIPE_STARTER_PRICE_ID=${{ secrets.STRIPE_STARTER_PRICE_ID }}
+            STRIPE_GROWTH_PRICE_ID=${{ secrets.STRIPE_GROWTH_PRICE_ID }}
+            STRIPE_BUSINESS_PRICE_ID=${{ secrets.STRIPE_BUSINESS_PRICE_ID }}
   
             PORT=8080
             EOF

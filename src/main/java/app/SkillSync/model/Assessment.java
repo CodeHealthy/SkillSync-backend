@@ -15,11 +15,14 @@ public class Assessment {
 
     private String title;
     private String description;
+    private String roleTitle;
+    private AssessmentStatus status = AssessmentStatus.PUBLISHED;
     private AssessmentType type;
 
     private ProgrammingLanguage language;
 
     private int maxScore;
+    private Integer durationMinutes;
 
     private String prompt;
     private String starterCode;
@@ -31,6 +34,7 @@ public class Assessment {
     private String expectedOutput;
 
     private List<AssessmentTestCase> testCases = new ArrayList<>();
+    private List<AssessmentSection> sections = new ArrayList<>();
 
     private Instant createdAt;
     private String organizationId;
@@ -50,6 +54,14 @@ public class Assessment {
         return description;
     }
 
+    public String getRoleTitle() {
+        return roleTitle;
+    }
+
+    public AssessmentStatus getStatus() {
+        return status;
+    }
+
     public AssessmentType getType() {
         return type;
     }
@@ -60,6 +72,10 @@ public class Assessment {
 
     public int getMaxScore() {
         return maxScore;
+    }
+
+    public Integer getDurationMinutes() {
+        return durationMinutes;
     }
 
     public String getPrompt() {
@@ -76,6 +92,10 @@ public class Assessment {
 
     public List<AssessmentTestCase> getTestCases() {
         return testCases;
+    }
+
+    public List<AssessmentSection> getSections() {
+        return sections;
     }
 
     public Instant getCreatedAt() {
@@ -98,6 +118,14 @@ public class Assessment {
         this.description = description;
     }
 
+    public void setRoleTitle(String roleTitle) {
+        this.roleTitle = roleTitle;
+    }
+
+    public void setStatus(AssessmentStatus status) {
+        this.status = status == null ? AssessmentStatus.PUBLISHED : status;
+    }
+
     public void setType(AssessmentType type) {
         this.type = type;
     }
@@ -108,6 +136,10 @@ public class Assessment {
 
     public void setMaxScore(int maxScore) {
         this.maxScore = maxScore;
+    }
+
+    public void setDurationMinutes(Integer durationMinutes) {
+        this.durationMinutes = durationMinutes;
     }
 
     public void setPrompt(String prompt) {
@@ -124,6 +156,10 @@ public class Assessment {
 
     public void setTestCases(List<AssessmentTestCase> testCases) {
         this.testCases = testCases == null ? new ArrayList<>() : testCases;
+    }
+
+    public void setSections(List<AssessmentSection> sections) {
+        this.sections = sections == null ? new ArrayList<>() : sections;
     }
 
     public void setCreatedAt(Instant createdAt) {

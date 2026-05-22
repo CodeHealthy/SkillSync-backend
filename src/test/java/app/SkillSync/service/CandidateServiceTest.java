@@ -23,13 +23,19 @@ class CandidateServiceTest {
 
     private CandidateRepository candidateRepository;
     private UserRepository userRepository;
+    private BillingService billingService;
     private CandidateService candidateService;
 
     @BeforeEach
     void setUp() {
         candidateRepository = mock(CandidateRepository.class);
         userRepository = mock(UserRepository.class);
-        candidateService = new CandidateService(candidateRepository, userRepository);
+        billingService = mock(BillingService.class);
+        candidateService = new CandidateService(
+                candidateRepository,
+                userRepository,
+                billingService
+        );
     }
 
     @AfterEach

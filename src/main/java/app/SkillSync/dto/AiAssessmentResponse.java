@@ -1,6 +1,7 @@
 package app.SkillSync.dto;
 
 import app.SkillSync.model.AssessmentTestCase;
+import app.SkillSync.model.AssessmentSection;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -9,6 +10,10 @@ public class AiAssessmentResponse {
 
     private String title;
     private String description;
+    private String roleTitle;
+    private String assessmentType;
+    private String language;
+    private Integer durationMinutes;
     private String prompt;
     private String starterCode;
 
@@ -22,6 +27,7 @@ public class AiAssessmentResponse {
     private String rubric;
 
     private List<AssessmentTestCase> testCases = new ArrayList<>();
+    private List<AssessmentSection> sections = new ArrayList<>();
 
     public AiAssessmentResponse() {
     }
@@ -54,6 +60,22 @@ public class AiAssessmentResponse {
         return description;
     }
 
+    public String getRoleTitle() {
+        return roleTitle;
+    }
+
+    public String getAssessmentType() {
+        return assessmentType;
+    }
+
+    public String getLanguage() {
+        return language;
+    }
+
+    public Integer getDurationMinutes() {
+        return durationMinutes;
+    }
+
     public String getPrompt() {
         return prompt;
     }
@@ -78,12 +100,32 @@ public class AiAssessmentResponse {
         return testCases;
     }
 
+    public List<AssessmentSection> getSections() {
+        return sections;
+    }
+
     public void setTitle(String title) {
         this.title = title;
     }
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public void setRoleTitle(String roleTitle) {
+        this.roleTitle = roleTitle;
+    }
+
+    public void setAssessmentType(String assessmentType) {
+        this.assessmentType = assessmentType;
+    }
+
+    public void setLanguage(String language) {
+        this.language = language;
+    }
+
+    public void setDurationMinutes(Integer durationMinutes) {
+        this.durationMinutes = durationMinutes;
     }
 
     public void setPrompt(String prompt) {
@@ -108,5 +150,9 @@ public class AiAssessmentResponse {
 
     public void setTestCases(List<AssessmentTestCase> testCases) {
         this.testCases = testCases == null ? new ArrayList<>() : testCases;
+    }
+
+    public void setSections(List<AssessmentSection> sections) {
+        this.sections = sections == null ? new ArrayList<>() : sections;
     }
 }

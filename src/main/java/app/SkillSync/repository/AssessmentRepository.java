@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface AssessmentRepository extends MongoRepository<Assessment, String> {
     List<Assessment> findByOrganizationId(String organizationId);
+    long countByOrganizationId(String organizationId);
 }

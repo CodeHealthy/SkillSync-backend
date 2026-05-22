@@ -1,7 +1,9 @@
 package app.SkillSync.service;
 
 import app.SkillSync.dto.AssignAssessmentRequest;
+import app.SkillSync.dto.CreateAssessmentRequest;
 import app.SkillSync.dto.GradeAssignmentRequest;
+import app.SkillSync.dto.QuestionReviewRequest;
 import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.model.*;
 import app.SkillSync.repository.AssessmentAssignmentRepository;
@@ -16,6 +18,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.time.Instant;
 
@@ -30,6 +33,7 @@ class AssessmentServiceTest {
     private CodeExecutionService codeExecutionService;
     private UserRepository userRepository;
     private OrganizationRepository organizationRepository;
+    private BillingService billingService;
     private AssessmentService assessmentService;
 
     @BeforeEach
@@ -40,6 +44,7 @@ class AssessmentServiceTest {
         codeExecutionService = mock(CodeExecutionService.class);
         userRepository = mock(UserRepository.class);
         organizationRepository = mock(OrganizationRepository.class);
+        billingService = mock(BillingService.class);
 
         assessmentService = new AssessmentService(
                 assessmentRepository,
@@ -47,7 +52,8 @@ class AssessmentServiceTest {
                 candidateRepository,
                 codeExecutionService,
                 userRepository,
-                organizationRepository
+                organizationRepository,
+                billingService
         );
     }
 
@@ -232,6 +238,52 @@ class AssessmentServiceTest {
         assertEquals("assignment-2", assignments.get(1).getId());
 
         verify(assignmentRepository).findByOrganizationId("org-1");
+    }
+
+    @Test
+    void createAssessment_whenMixedAssessmentHasCodingSubsetScore_acceptsCodingTestCaseTotal() {
+        User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
+        setAuthenticatedUser(admin.getEmail());
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(assessmentRepository.save(any(Assessment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        CreateAssessmentRequest request = new CreateAssessmentRequest();
+        request.setTitle("Associate Software Developer - Java Array Skills");
+        request.setDescription("Java arrays assessment");
+        request.setRoleTitle("Associate Software Developer");
+        request.setStatus(AssessmentStatus.PUBLISHED);
+        request.setType(AssessmentType.CODING_CHALLENGE);
+        request.setLanguage(ProgrammingLanguage.JAVA);
+        request.setMaxScore(100);
+        request.setPrompt("Find the second largest unique element.");
+        request.setStarterCode("public class Main {}");
+        request.setExpectedOutput("20");
+        request.setSections(List.of(
+                section(
+                        "section-1",
+                        "Array Fundamentals",
+                        multipleChoiceQuestion("question-1", 25),
+                        multipleChoiceQuestion("question-2", 25)
+                ),
+                section(
+                        "section-2",
+                        "Array Manipulation Challenge",
+                        codingQuestion("question-3", 50)
+                )
+        ));
+
+        Assessment savedAssessment = assessmentService.createAssessment(request);
+
+        assertEquals(AssessmentType.CODING_CHALLENGE, savedAssessment.getType());
+        assertEquals(100, savedAssessment.getMaxScore());
+        assertEquals(50, savedAssessment.getTestCases().stream()
+                .mapToInt(testCase -> testCase.getPoints() == null ? 0 : testCase.getPoints())
+                .sum());
+        assertEquals(50, savedAssessment.getSections().get(1).getQuestions().get(0).getPoints());
+
+        verify(assessmentRepository).save(any(Assessment.class));
     }
 
     @Test
@@ -481,6 +533,70 @@ class AssessmentServiceTest {
     }
 
     @Test
+    void startAssignmentSection_whenCandidateOwnsAssignment_storesSectionAttempt() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setStatus(AssignmentStatus.ASSIGNED);
+        assignment.setSections(List.of(section(
+                "section-1",
+                "Technical Knowledge",
+                multipleChoiceQuestion("mcq-1", 10)
+        )));
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+        when(assignmentRepository.save(any(AssessmentAssignment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AssessmentAssignment savedAssignment = assessmentService.startAssignmentSection(
+                "assignment-1",
+                "section-1"
+        );
+
+        assertEquals(1, savedAssignment.getSectionAttempts().size());
+        AssessmentSectionAttempt attempt = savedAssignment.getSectionAttempts().get(0);
+        assertEquals("section-1", attempt.getSectionId());
+        assertEquals("Technical Knowledge", attempt.getSectionTitle());
+        assertNotNull(attempt.getStartedAt());
+    }
+
+    @Test
+    void submitAssignment_whenStructuredSectionWasNotStarted_throwsIllegalArgumentException() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.MCQ);
+        assignment.setStatus(AssignmentStatus.ASSIGNED);
+        assignment.setSections(List.of(section(
+                "section-1",
+                "Technical Knowledge",
+                multipleChoiceQuestion("mcq-1", 10)
+        )));
+
+        SubmitAssignmentRequest request = new SubmitAssignmentRequest();
+        request.setSubmittedAnswers(Map.of("mcq-1", "mcq-1-option-1"));
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.submitAssignment("assignment-1", request)
+        );
+
+        assertEquals("Start every section before submitting the assessment.", exception.getMessage());
+    }
+
+    @Test
     void gradeAssignment_whenAdminDoesNotOwnAssignment_throwsRuntimeException() {
         User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
 
@@ -530,6 +646,49 @@ class AssessmentServiceTest {
         assertEquals("Strong submission", savedAssignment.getFeedback());
         assertEquals(AssignmentStatus.GRADED, savedAssignment.getStatus());
         assertNotNull(savedAssignment.getGradedAt());
+    }
+
+    @Test
+    void gradeAssignment_whenQuestionReviewsProvided_savesNormalizedReviews() {
+        User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
+
+        AssessmentQuestion shortAnswer = shortAnswerQuestion("short-1", 20);
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-1", "org-1");
+        assignment.setStatus(AssignmentStatus.SUBMITTED);
+        assignment.setSections(List.of(section("section-1", "Work style", shortAnswer)));
+
+        QuestionReviewRequest review = new QuestionReviewRequest();
+        review.setQuestionId("short-1");
+        review.setQuestionTitle("Ignored title");
+        review.setQuestionType(QuestionType.MULTIPLE_CHOICE);
+        review.setMaxPoints(100);
+        review.setAwardedPoints(14);
+        review.setNotes("Clear reasoning with one missing trade-off.");
+        review.setReviewed(true);
+
+        GradeAssignmentRequest request = new GradeAssignmentRequest();
+        request.setScore(14);
+        request.setFeedback("Useful practical judgment.");
+        request.setQuestionReviews(List.of(review));
+
+        setAuthenticatedUser(admin.getEmail());
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(assignmentRepository.save(any(AssessmentAssignment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AssessmentAssignment savedAssignment = assessmentService.gradeAssignment("assignment-1", request);
+
+        assertEquals(1, savedAssignment.getQuestionReviews().size());
+        QuestionReview savedReview = savedAssignment.getQuestionReviews().get(0);
+        assertEquals("short-1", savedReview.getQuestionId());
+        assertEquals("Short short-1", savedReview.getQuestionTitle());
+        assertEquals(QuestionType.SHORT_ANSWER, savedReview.getQuestionType());
+        assertEquals(20, savedReview.getMaxPoints());
+        assertEquals(14, savedReview.getAwardedPoints());
+        assertEquals("Clear reasoning with one missing trade-off.", savedReview.getNotes());
+        assertTrue(Boolean.TRUE.equals(savedReview.getReviewed()));
     }
 
     @Test
@@ -619,6 +778,89 @@ class AssessmentServiceTest {
         assignment.setMaxScore(100);
         assignment.setOrganizationId(organizationId);
         return assignment;
+    }
+
+    private AssessmentSection section(
+            String id,
+            String title,
+            AssessmentQuestion... questions
+    ) {
+        AssessmentSection section = new AssessmentSection();
+        section.setId(id);
+        section.setTitle(title);
+        section.setQuestions(List.of(questions));
+        return section;
+    }
+
+    private AssessmentQuestion multipleChoiceQuestion(String id, int points) {
+        AssessmentQuestion question = new AssessmentQuestion();
+        question.setId(id);
+        question.setType(QuestionType.MULTIPLE_CHOICE);
+        question.setTitle("MCQ " + id);
+        question.setPrompt("Choose the correct answer.");
+        question.setPoints(points);
+        question.setLanguage(ProgrammingLanguage.TEXT);
+
+        AssessmentQuestionOption correct = new AssessmentQuestionOption();
+        correct.setId(id + "-option-1");
+        correct.setText("Correct");
+        correct.setCorrect(true);
+
+        AssessmentQuestionOption incorrect = new AssessmentQuestionOption();
+        incorrect.setId(id + "-option-2");
+        incorrect.setText("Incorrect");
+        incorrect.setCorrect(false);
+
+        question.setOptions(List.of(correct, incorrect));
+        return question;
+    }
+
+    private AssessmentQuestion shortAnswerQuestion(String id, int points) {
+        AssessmentQuestion question = new AssessmentQuestion();
+        question.setId(id);
+        question.setType(QuestionType.SHORT_ANSWER);
+        question.setTitle("Short " + id);
+        question.setPrompt("Explain your reasoning.");
+        question.setPoints(points);
+        question.setLanguage(ProgrammingLanguage.TEXT);
+        question.setCorrectAnswer("Look for concise reasoning and practical trade-offs.");
+        return question;
+    }
+
+    private AssessmentQuestion codingQuestion(String id, int points) {
+        AssessmentQuestion question = new AssessmentQuestion();
+        question.setId(id);
+        question.setType(QuestionType.CODING_CHALLENGE);
+        question.setTitle("Coding " + id);
+        question.setPrompt("Find the second largest unique element.");
+        question.setPoints(points);
+        question.setLanguage(ProgrammingLanguage.JAVA);
+        question.setStarterCode("public class Main {}");
+        question.setExpectedOutput("20");
+        question.setTestCases(List.of(
+                testCase("Basic Case", "10 20 5 30 15", "20", false, 10),
+                testCase("Duplicate Elements", "5 5 8 8 10 10 3", "8", true, 10),
+                testCase("Few Unique Elements", "7 7 7 4 4", "4", true, 10),
+                testCase("Single Unique", "100 100 100", "-1", true, 10),
+                testCase("One Number", "5", "-1", true, 10)
+        ));
+        return question;
+    }
+
+    private AssessmentTestCase testCase(
+            String name,
+            String input,
+            String expectedOutput,
+            boolean hidden,
+            int points
+    ) {
+        AssessmentTestCase testCase = new AssessmentTestCase();
+        testCase.setName(name);
+        testCase.setInput(input);
+        testCase.setExpectedOutput(expectedOutput);
+        testCase.setHidden(hidden);
+        testCase.setPoints(points);
+        return testCase;
     }
 
     private AssignAssessmentRequest assignRequest(String assessmentId, String candidateId) {

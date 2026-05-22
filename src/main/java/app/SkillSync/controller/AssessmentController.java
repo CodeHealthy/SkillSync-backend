@@ -5,6 +5,7 @@ import app.SkillSync.dto.AssignmentRunResult;
 import app.SkillSync.dto.CreateAssessmentRequest;
 import app.SkillSync.dto.GradeAssignmentRequest;
 import app.SkillSync.dto.RunCodeRequest;
+import app.SkillSync.dto.SectionAttemptRequest;
 import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.model.Assessment;
 import app.SkillSync.model.AssessmentAssignment;
@@ -71,6 +72,32 @@ public class AssessmentController {
             @PathVariable String assignmentId
     ) {
         AssessmentAssignment assignment = assessmentService.startAssignment(assignmentId);
+        return ResponseEntity.ok(assignment);
+    }
+
+    @PreAuthorize("hasRole('CANDIDATE')")
+    @PostMapping("/assignments/{assignmentId}/sections/start")
+    public ResponseEntity<AssessmentAssignment> startAssignmentSection(
+            @PathVariable String assignmentId,
+            @Valid @RequestBody SectionAttemptRequest request
+    ) {
+        AssessmentAssignment assignment = assessmentService.startAssignmentSection(
+                assignmentId,
+                request.getSectionId()
+        );
+        return ResponseEntity.ok(assignment);
+    }
+
+    @PreAuthorize("hasRole('CANDIDATE')")
+    @PostMapping("/assignments/{assignmentId}/sections/complete")
+    public ResponseEntity<AssessmentAssignment> completeAssignmentSection(
+            @PathVariable String assignmentId,
+            @Valid @RequestBody SectionAttemptRequest request
+    ) {
+        AssessmentAssignment assignment = assessmentService.completeAssignmentSection(
+                assignmentId,
+                request.getSectionId()
+        );
         return ResponseEntity.ok(assignment);
     }
 

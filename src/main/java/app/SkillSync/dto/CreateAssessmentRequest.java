@@ -2,6 +2,8 @@ package app.SkillSync.dto;
 
 import app.SkillSync.model.AssessmentTestCase;
 import app.SkillSync.model.AssessmentType;
+import app.SkillSync.model.AssessmentSection;
+import app.SkillSync.model.AssessmentStatus;
 import app.SkillSync.model.ProgrammingLanguage;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -18,6 +20,8 @@ public class CreateAssessmentRequest {
     private String title;
 
     private String description;
+    private String roleTitle;
+    private AssessmentStatus status;
 
     @NotNull(message = "Assessment type is required")
     private AssessmentType type;
@@ -27,6 +31,7 @@ public class CreateAssessmentRequest {
     @Min(value = 1, message = "Max score must be at least 1")
     @Max(value = 1000, message = "Max score cannot exceed 1000")
     private int maxScore;
+    private Integer durationMinutes;
 
     @NotBlank(message = "Prompt is required")
     private String prompt;
@@ -41,6 +46,8 @@ public class CreateAssessmentRequest {
 
     @Valid
     private List<AssessmentTestCase> testCases = new ArrayList<>();
+    @Valid
+    private List<AssessmentSection> sections = new ArrayList<>();
 
     public CreateAssessmentRequest() {
     }
@@ -53,6 +60,14 @@ public class CreateAssessmentRequest {
         return description;
     }
 
+    public String getRoleTitle() {
+        return roleTitle;
+    }
+
+    public AssessmentStatus getStatus() {
+        return status;
+    }
+
     public AssessmentType getType() {
         return type;
     }
@@ -63,6 +78,10 @@ public class CreateAssessmentRequest {
 
     public int getMaxScore() {
         return maxScore;
+    }
+
+    public Integer getDurationMinutes() {
+        return durationMinutes;
     }
 
     public String getPrompt() {
@@ -81,12 +100,24 @@ public class CreateAssessmentRequest {
         return testCases;
     }
 
+    public List<AssessmentSection> getSections() {
+        return sections;
+    }
+
     public void setTitle(String title) {
         this.title = title;
     }
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public void setRoleTitle(String roleTitle) {
+        this.roleTitle = roleTitle;
+    }
+
+    public void setStatus(AssessmentStatus status) {
+        this.status = status;
     }
 
     public void setType(AssessmentType type) {
@@ -99,6 +130,10 @@ public class CreateAssessmentRequest {
 
     public void setMaxScore(int maxScore) {
         this.maxScore = maxScore;
+    }
+
+    public void setDurationMinutes(Integer durationMinutes) {
+        this.durationMinutes = durationMinutes;
     }
 
     public void setPrompt(String prompt) {
@@ -115,5 +150,9 @@ public class CreateAssessmentRequest {
 
     public void setTestCases(List<AssessmentTestCase> testCases) {
         this.testCases = testCases == null ? new ArrayList<>() : testCases;
+    }
+
+    public void setSections(List<AssessmentSection> sections) {
+        this.sections = sections == null ? new ArrayList<>() : sections;
     }
 }

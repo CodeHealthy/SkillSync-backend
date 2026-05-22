@@ -5,6 +5,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 
 import java.util.List;
 import java.util.Optional;
+import java.time.Instant;
 
 public interface CandidateRepository extends MongoRepository<Candidate, String> {
 
@@ -17,4 +18,9 @@ public interface CandidateRepository extends MongoRepository<Candidate, String> 
     List<Candidate> findByOrganizationId(String organizationId);
     Optional<Candidate> findByUserId(String userId);
     boolean existsByOrganizationIdAndEmailIgnoreCase(String organizationId, String email);
+    long countByOrganizationIdAndCreatedAtBetween(
+            String organizationId,
+            Instant start,
+            Instant end
+    );
 }

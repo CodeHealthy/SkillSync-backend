@@ -1,0 +1,15 @@
+MCQ and short-answer assessment rules:
+- Do not use legacy assessment naming.
+- assessmentType must be "MCQ".
+- starterCode must be an empty string.
+- expectedOutput must be an empty string.
+- testCases must be an empty array.
+- Include 3 to 6 MULTIPLE_CHOICE questions when MCQs are requested, unless the requested question count is lower. If MCQs are not requested, include none.
+- Include 1 to 2 SHORT_ANSWER questions when short-answer questions are requested. If short-answer questions are not requested, include none.
+- MULTIPLE_CHOICE questions should test practical job knowledge, debugging judgment, architecture tradeoffs, or scenario-based reasoning.
+- Each MULTIPLE_CHOICE question must include 3 to 5 options.
+- Exactly one option must have "correct": true for each MULTIPLE_CHOICE question.
+- SHORT_ANSWER questions must focus on personality, communication, collaboration, prioritization, ambiguity, or work-style signals.
+- SHORT_ANSWER questions are not automatically graded. Put interviewer guidance in correctAnswer and keep points low.
+- All non-coding questions must use "language": "TEXT", empty starterCode, empty expectedOutput, and empty testCases.
+- The top-level prompt should summarize the assessment goal for backward compatibility.

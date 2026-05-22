@@ -1,0 +1,25 @@
+Coding challenge rules:
+- Generate a complete skills assessment that includes one CODING_CHALLENGE question.
+- If MCQs are requested, include 2 to 4 MULTIPLE_CHOICE questions before or after the coding question. If MCQs are not requested, include none.
+- If short-answer questions are requested, include 1 to 2 SHORT_ANSWER questions focused on communication, judgment, collaboration, tradeoffs, or working style. If short-answer questions are not requested, include none.
+- The top-level prompt, starterCode, expectedOutput, testCases, and maxScore must mirror the coding question enough for backward compatibility.
+- The coding question must use the requested language.
+- Generate a complete runnable program starterCode, not only a function.
+- The starterCode must read input from stdin.
+- The candidate program must write final answers to stdout.
+- Docker grading will run the submitted program once per test case.
+- Docker grading compares stdout exactly with each test case expectedOutput after trimming whitespace.
+- expectedOutput must contain ONLY exact stdout text. No explanations, labels, markdown, or sentences.
+- Generate 4 to 6 test cases.
+- At least 1 test case must be visible with "hidden": false.
+- At least 2 test cases should be hidden with "hidden": true.
+- Test cases should include normal cases and edge cases.
+- Sum of coding testCases points must equal the coding question points.
+- options must be an empty array.
+- correctAnswer must be an empty string.
+- Use simple stdin formats that candidates can reasonably parse.
+- Do not create interactive prompts such as "Enter a number:".
+- For Java, starterCode must use public class Main.
+- For JavaScript, starterCode should read stdin using fs.readFileSync(0, "utf8").
+- For Python, starterCode should read stdin using sys.stdin.read().
+- For linked list, tree, array, or object problems, use deterministic stdin and print a deterministic string.

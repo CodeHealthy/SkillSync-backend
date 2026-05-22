@@ -20,10 +20,16 @@ public class CandidateService {
 
     private final CandidateRepository candidateRepository;
     private final UserRepository userRepository;
+    private final BillingService billingService;
 
-    public CandidateService(CandidateRepository candidateRepository,UserRepository userRepository) {
+    public CandidateService(
+            CandidateRepository candidateRepository,
+            UserRepository userRepository,
+            BillingService billingService
+    ) {
         this.candidateRepository = candidateRepository;
         this.userRepository = userRepository;
+        this.billingService = billingService;
     }
 
     private User getCurrentUser() {
@@ -94,6 +100,8 @@ public class CandidateService {
         if (organizationId == null || organizationId.isBlank()) {
             throw new RuntimeException("Admin is not linked to an organization.");
         }
+
+        billingService.ensureCanInviteCandidate(organizationId);
 
         String normalizedEmail = request.getEmail().trim().toLowerCase();
 
