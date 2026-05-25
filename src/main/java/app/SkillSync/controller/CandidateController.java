@@ -23,7 +23,7 @@ public class CandidateController {
         this.candidateService = candidateService;
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER')")
     @PostMapping
     public ResponseEntity<Candidate> createCandidate(
             @Valid @RequestBody CreateCandidateRequest request
@@ -32,13 +32,13 @@ public class CandidateController {
         return ResponseEntity.status(HttpStatus.CREATED).body(candidate);
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR')")
     @GetMapping
     public ResponseEntity<List<Candidate>> getAllCandidates() {
         return ResponseEntity.ok(candidateService.getAllCandidates());
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR')")
     @GetMapping("/{candidateId}")
     public ResponseEntity<Candidate> getCandidateById(
             @PathVariable String candidateId
@@ -46,7 +46,7 @@ public class CandidateController {
         return ResponseEntity.ok(candidateService.getCandidateById(candidateId));
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR')")
     @GetMapping("/search")
     public ResponseEntity<List<Candidate>> searchCandidates(
             @RequestParam String name
@@ -54,7 +54,7 @@ public class CandidateController {
         return ResponseEntity.ok(candidateService.searchCandidatesByName(name));
     }
 
-    @PreAuthorize("hasAnyRole('ADMIN', 'CANDIDATE')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR','CANDIDATE')")
     @PostMapping("/{candidateId}/test-results")
     public ResponseEntity<TestResult> submitTestResult(
             @PathVariable String candidateId,
@@ -64,7 +64,7 @@ public class CandidateController {
         return ResponseEntity.status(HttpStatus.CREATED).body(testResult);
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR')")
     @GetMapping("/{candidateId}/test-results")
     public ResponseEntity<List<TestResult>> getTestResults(
             @PathVariable String candidateId

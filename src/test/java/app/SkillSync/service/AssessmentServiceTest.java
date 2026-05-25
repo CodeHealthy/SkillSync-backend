@@ -1,9 +1,13 @@
 package app.SkillSync.service;
 
 import app.SkillSync.dto.AssignAssessmentRequest;
+import app.SkillSync.dto.CodeExecutionResult;
 import app.SkillSync.dto.CreateAssessmentRequest;
 import app.SkillSync.dto.GradeAssignmentRequest;
 import app.SkillSync.dto.QuestionReviewRequest;
+import app.SkillSync.dto.RecordIntegrityEventRequest;
+import app.SkillSync.dto.RunCodeRequest;
+import app.SkillSync.dto.SaveAssignmentDraftRequest;
 import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.model.*;
 import app.SkillSync.repository.AssessmentAssignmentRepository;
@@ -34,6 +38,7 @@ class AssessmentServiceTest {
     private UserRepository userRepository;
     private OrganizationRepository organizationRepository;
     private BillingService billingService;
+    private AuditLogService auditLogService;
     private AssessmentService assessmentService;
 
     @BeforeEach
@@ -45,6 +50,7 @@ class AssessmentServiceTest {
         userRepository = mock(UserRepository.class);
         organizationRepository = mock(OrganizationRepository.class);
         billingService = mock(BillingService.class);
+        auditLogService = mock(AuditLogService.class);
 
         assessmentService = new AssessmentService(
                 assessmentRepository,
@@ -53,7 +59,8 @@ class AssessmentServiceTest {
                 codeExecutionService,
                 userRepository,
                 organizationRepository,
-                billingService
+                billingService,
+                auditLogService
         );
     }
 
@@ -149,6 +156,8 @@ class AssessmentServiceTest {
         assertEquals(100, savedAssignment.getMaxScore());
         assertEquals(dueAt, savedAssignment.getDueAt());
         assertEquals(90, savedAssignment.getTimeLimitMinutes());
+        assertEquals("PENDING_SUBMISSION", savedAssignment.getReviewStatus());
+        assertEquals(0, savedAssignment.getReviewedQuestionCount());
 
         verify(assignmentRepository).save(any(AssessmentAssignment.class));
     }
@@ -192,6 +201,25 @@ class AssessmentServiceTest {
     }
 
     @Test
+    void assignAssessment_whenTimeLimitIsNotPositive_throwsIllegalArgumentException() {
+        Assessment assessment = assessment("assessment-1", "org-1");
+
+        when(assessmentRepository.findById("assessment-1")).thenReturn(Optional.of(assessment));
+
+        AssignAssessmentRequest request = assignRequest("assessment-1", "candidate-1");
+        request.setTimeLimitMinutes(0);
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.assignAssessment(request)
+        );
+
+        assertEquals("Time limit must be greater than zero.", exception.getMessage());
+
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
     void assignAssessment_whenAlreadyAssigned_throwsIllegalArgumentException() {
         User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
         Assessment assessment = assessment("assessment-1", "org-1");
@@ -224,6 +252,9 @@ class AssessmentServiceTest {
 
         AssessmentAssignment assignmentOne = assignment("assignment-1", "candidate-1", "org-1");
         AssessmentAssignment assignmentTwo = assignment("assignment-2", "candidate-2", "org-1");
+        assignmentOne.setDraftCode("in-progress code");
+        assignmentOne.setDraftAnswers(Map.of("question-1", "in-progress answer"));
+        assignmentOne.setDraftSavedAt(Instant.now());
 
         setAuthenticatedUser(admin.getEmail());
 
@@ -236,6 +267,9 @@ class AssessmentServiceTest {
         assertEquals(2, assignments.size());
         assertEquals("assignment-1", assignments.get(0).getId());
         assertEquals("assignment-2", assignments.get(1).getId());
+        assertNull(assignments.get(0).getDraftCode());
+        assertTrue(assignments.get(0).getDraftAnswers().isEmpty());
+        assertNull(assignments.get(0).getDraftSavedAt());
 
         verify(assignmentRepository).findByOrganizationId("org-1");
     }
@@ -311,6 +345,38 @@ class AssessmentServiceTest {
         assertEquals("assignment-2", assignments.get(1).getId());
 
         verify(assignmentRepository).findByCandidateIdIn(List.of("candidate-profile-1", "candidate-profile-2"));
+    }
+
+    @Test
+    void getAssignmentsForCurrentCandidate_masksHiddenExecutionDetailsAndSummaries() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setActualOutput("Hidden Case [FAILED]\nsecret actual output");
+        assignment.setExecutionError("Hidden Case:\nsecret runtime error");
+        assignment.setTestCaseResults(List.of(
+                executionResult("Visible Case", false, "1", "2", "2", ""),
+                executionResult("Hidden Case", true, "secret input", "secret expected", "secret actual", "secret error")
+        ));
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+        when(assignmentRepository.findByCandidateIdIn(List.of("candidate-profile-1")))
+                .thenReturn(List.of(assignment));
+
+        List<AssessmentAssignment> assignments = assessmentService.getAssignmentsForCurrentCandidate();
+
+        AssessmentAssignment safeAssignment = assignments.get(0);
+        assertNull(safeAssignment.getActualOutput());
+        assertNull(safeAssignment.getExecutionError());
+        assertEquals("1", safeAssignment.getTestCaseResults().get(0).getInput());
+        assertNull(safeAssignment.getTestCaseResults().get(1).getInput());
+        assertNull(safeAssignment.getTestCaseResults().get(1).getExpectedOutput());
+        assertNull(safeAssignment.getTestCaseResults().get(1).getActualOutput());
+        assertNull(safeAssignment.getTestCaseResults().get(1).getError());
     }
 
     @Test
@@ -447,6 +513,37 @@ class AssessmentServiceTest {
     }
 
     @Test
+    void submitAssignment_whenAlreadySubmittedAndExpired_reportsAlreadySubmitted() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setStatus(AssignmentStatus.SUBMITTED);
+        assignment.setTimeLimitMinutes(45);
+        assignment.setStartedAt(Instant.now().minusSeconds(4_000));
+        assignment.setExpiresAt(Instant.now().minusSeconds(60));
+
+        SubmitAssignmentRequest request = new SubmitAssignmentRequest();
+        request.setSubmittedCode("public class Main {}");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.submitAssignment("assignment-1", request)
+        );
+
+        assertEquals("Assignment has already been submitted", exception.getMessage());
+
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
     void submitAssignment_whenCandidateDoesNotOwnAssignment_throwsRuntimeException() {
         User candidateUser = candidateUser("user-1", "candidate@example.com");
 
@@ -500,6 +597,124 @@ class AssessmentServiceTest {
         assertEquals("PENDING_EXECUTION", savedAssignment.getExecutionStatus());
         assertNotNull(savedAssignment.getSubmittedAt());
         assertFalse(Boolean.TRUE.equals(savedAssignment.getAutoSubmitted()));
+    }
+
+    @Test
+    void saveAssignmentDraft_whenCandidateOwnsAssignment_persistsDraft() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setStatus(AssignmentStatus.ASSIGNED);
+
+        SaveAssignmentDraftRequest request = new SaveAssignmentDraftRequest();
+        request.setDraftCode("public class Main {}");
+        request.setDraftAnswers(Map.of("short-1", "  Draft explanation  "));
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+        when(assignmentRepository.save(any(AssessmentAssignment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AssessmentAssignment savedAssignment = assessmentService.saveAssignmentDraft("assignment-1", request);
+
+        assertEquals("public class Main {}", savedAssignment.getDraftCode());
+        assertEquals(Map.of("short-1", "Draft explanation"), savedAssignment.getDraftAnswers());
+        assertNotNull(savedAssignment.getDraftSavedAt());
+        assertEquals(AssignmentStatus.ASSIGNED, savedAssignment.getStatus());
+    }
+
+    @Test
+    void recordIntegrityEvent_whenCandidateOwnsActiveAssignment_appendsNormalizedEvent() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setStatus(AssignmentStatus.ASSIGNED);
+
+        RecordIntegrityEventRequest request = new RecordIntegrityEventRequest();
+        request.setType("window_blur");
+        request.setDetail("Candidate left the assessment window.");
+        request.setSectionId("section-1");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+        when(assignmentRepository.save(any(AssessmentAssignment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AssessmentAssignment savedAssignment = assessmentService.recordIntegrityEvent("assignment-1", request);
+
+        assertEquals(1, savedAssignment.getIntegrityEvents().size());
+        AssessmentIntegrityEvent event = savedAssignment.getIntegrityEvents().get(0);
+        assertEquals("WINDOW_BLUR", event.getType());
+        assertEquals("Candidate left the assessment window.", event.getDetail());
+        assertEquals("section-1", event.getSectionId());
+        assertNotNull(event.getOccurredAt());
+    }
+
+    @Test
+    void recordIntegrityEvent_whenAssignmentAlreadySubmitted_throwsIllegalArgumentException() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setStatus(AssignmentStatus.SUBMITTED);
+
+        RecordIntegrityEventRequest request = new RecordIntegrityEventRequest();
+        request.setType("COPY");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.recordIntegrityEvent("assignment-1", request)
+        );
+
+        assertEquals("Integrity events can only be recorded for active assignments.", exception.getMessage());
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
+    }
+
+    @Test
+    void submitAssignment_whenPayloadIsBlank_usesSavedDraftAndClearsIt() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setStatus(AssignmentStatus.ASSIGNED);
+        assignment.setDraftCode("public class Main {}");
+        assignment.setDraftAnswers(Map.of("short-1", "Draft explanation"));
+        assignment.setDraftSavedAt(Instant.now());
+
+        SubmitAssignmentRequest request = new SubmitAssignmentRequest();
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+        when(assignmentRepository.save(any(AssessmentAssignment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AssessmentAssignment savedAssignment = assessmentService.submitAssignment("assignment-1", request);
+
+        assertEquals(AssignmentStatus.SUBMITTED, savedAssignment.getStatus());
+        assertEquals("public class Main {}", savedAssignment.getSubmittedCode());
+        assertEquals(Map.of("short-1", "Draft explanation"), savedAssignment.getSubmittedAnswers());
+        assertNull(savedAssignment.getDraftCode());
+        assertTrue(savedAssignment.getDraftAnswers().isEmpty());
+        assertNull(savedAssignment.getDraftSavedAt());
     }
 
     @Test
@@ -597,6 +812,37 @@ class AssessmentServiceTest {
     }
 
     @Test
+    void runAssignmentCode_whenAssignmentExpired_throwsIllegalArgumentException() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setStatus(AssignmentStatus.ASSIGNED);
+        assignment.setTimeLimitMinutes(45);
+        assignment.setStartedAt(Instant.now().minusSeconds(4_000));
+        assignment.setExpiresAt(Instant.now().minusSeconds(60));
+
+        RunCodeRequest request = new RunCodeRequest();
+        request.setSourceCode("public class Main {}");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.runAssignmentCode("assignment-1", request)
+        );
+
+        assertEquals("Assessment time limit has expired.", exception.getMessage());
+
+        verify(codeExecutionService, never()).executeCode(any(), anyString(), anyString());
+    }
+
+    @Test
     void gradeAssignment_whenAdminDoesNotOwnAssignment_throwsRuntimeException() {
         User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
 
@@ -689,6 +935,53 @@ class AssessmentServiceTest {
         assertEquals(14, savedReview.getAwardedPoints());
         assertEquals("Clear reasoning with one missing trade-off.", savedReview.getNotes());
         assertTrue(Boolean.TRUE.equals(savedReview.getReviewed()));
+        assertEquals(14, savedAssignment.getManualReviewScore());
+        assertEquals(0, savedAssignment.getAutoScore());
+        assertEquals(1, savedAssignment.getReviewedQuestionCount());
+        assertEquals(1, savedAssignment.getTotalQuestionCount());
+        assertEquals("REVIEWED", savedAssignment.getReviewStatus());
+    }
+
+    @Test
+    void executeAssignment_whenAdminOwnsSubmittedCodingAssignment_setsScoreBreakdown() {
+        User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
+
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setStatus(AssignmentStatus.SUBMITTED);
+        assignment.setSubmittedCode("public class Main {}");
+        assignment.setSubmittedAnswers(Map.of("mcq-1", "mcq-1-option-1"));
+        assignment.setSections(List.of(section(
+                "section-1",
+                "Mixed skills",
+                multipleChoiceQuestion("mcq-1", 10),
+                codingQuestion("coding-1", 50)
+        )));
+        assignment.setTestCases(List.of(
+                testCase("Visible", "1", "1", false, 20),
+                testCase("Hidden", "2", "2", true, 30)
+        ));
+
+        setAuthenticatedUser(admin.getEmail());
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(assignmentRepository.save(any(AssessmentAssignment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(codeExecutionService.executeCode(any(), anyString(), eq("1"), eq("1")))
+                .thenReturn(new CodeExecutionResult("JAVA", "1", "", 0, false, true));
+        when(codeExecutionService.executeCode(any(), anyString(), eq("2"), eq("2")))
+                .thenReturn(new CodeExecutionResult("JAVA", "2", "", 0, false, true));
+
+        AssessmentAssignment savedAssignment = assessmentService.executeAssignment("assignment-1");
+
+        assertEquals(AssignmentStatus.GRADED, savedAssignment.getStatus());
+        assertEquals("PASSED", savedAssignment.getExecutionStatus());
+        assertEquals(50, savedAssignment.getCodingScore());
+        assertEquals(10, savedAssignment.getMultipleChoiceScore());
+        assertEquals(60, savedAssignment.getAutoScore());
+        assertEquals(60, savedAssignment.getScore());
+        assertEquals("REVIEWED", savedAssignment.getReviewStatus());
     }
 
     @Test
@@ -861,6 +1154,27 @@ class AssessmentServiceTest {
         testCase.setHidden(hidden);
         testCase.setPoints(points);
         return testCase;
+    }
+
+    private TestCaseExecutionResult executionResult(
+            String name,
+            boolean hidden,
+            String input,
+            String expectedOutput,
+            String actualOutput,
+            String error
+    ) {
+        TestCaseExecutionResult result = new TestCaseExecutionResult();
+        result.setName(name);
+        result.setHidden(hidden);
+        result.setInput(input);
+        result.setExpectedOutput(expectedOutput);
+        result.setActualOutput(actualOutput);
+        result.setError(error);
+        result.setPassed(error == null || error.isBlank());
+        result.setPoints(10);
+        result.setAwardedPoints(result.getPassed() ? 10 : 0);
+        return result;
     }
 
     private AssignAssessmentRequest assignRequest(String assessmentId, String candidateId) {

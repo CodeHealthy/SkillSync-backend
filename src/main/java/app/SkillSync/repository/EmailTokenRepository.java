@@ -5,6 +5,7 @@ import app.SkillSync.model.EmailToken;
 import org.springframework.data.mongodb.repository.MongoRepository;
 
 import java.util.Optional;
+import java.util.List;
 
 public interface EmailTokenRepository extends MongoRepository<EmailToken, String> {
 
@@ -12,6 +13,11 @@ public interface EmailTokenRepository extends MongoRepository<EmailToken, String
 
     Optional<EmailToken> findTopByEmailAndTypeOrderByCreatedAtDesc(
             String email,
+            AuthTokenType type
+    );
+
+    List<EmailToken> findByOrganizationIdAndTypeOrderByCreatedAtDesc(
+            String organizationId,
             AuthTokenType type
     );
 }

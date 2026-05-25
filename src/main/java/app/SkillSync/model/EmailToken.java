@@ -16,7 +16,16 @@ public class EmailToken {
     private String userId;
 
     @Indexed
+    private String candidateId;
+
+    @Indexed
+    private String organizationId;
+
+    @Indexed
     private String email;
+
+    private String recipientName;
+    private Role invitedRole;
 
     @Indexed
     private String tokenHash;
@@ -38,8 +47,24 @@ public class EmailToken {
         return userId;
     }
 
+    public String getCandidateId() {
+        return candidateId;
+    }
+
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
     public String getEmail() {
         return email;
+    }
+
+    public String getRecipientName() {
+        return recipientName;
+    }
+
+    public Role getInvitedRole() {
+        return invitedRole;
     }
 
     public String getTokenHash() {
@@ -70,8 +95,24 @@ public class EmailToken {
         this.userId = userId;
     }
 
+    public void setCandidateId(String candidateId) {
+        this.candidateId = candidateId;
+    }
+
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
+    }
+
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public void setRecipientName(String recipientName) {
+        this.recipientName = recipientName;
+    }
+
+    public void setInvitedRole(Role invitedRole) {
+        this.invitedRole = invitedRole;
     }
 
     public void setTokenHash(String tokenHash) {

@@ -8,12 +8,15 @@ import app.SkillSync.model.TestResult;
 import app.SkillSync.model.User;
 import app.SkillSync.repository.CandidateRepository;
 import app.SkillSync.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class CandidateService {
@@ -21,15 +24,27 @@ public class CandidateService {
     private final CandidateRepository candidateRepository;
     private final UserRepository userRepository;
     private final BillingService billingService;
+    private final EmailTokenService emailTokenService;
+    private final MailService mailService;
+    private final AuditLogService auditLogService;
+
+    @Value("${app.frontend.base-url:http://localhost:3000}")
+    private String frontendBaseUrl;
 
     public CandidateService(
             CandidateRepository candidateRepository,
             UserRepository userRepository,
-            BillingService billingService
+            BillingService billingService,
+            EmailTokenService emailTokenService,
+            MailService mailService,
+            AuditLogService auditLogService
     ) {
         this.candidateRepository = candidateRepository;
         this.userRepository = userRepository;
         this.billingService = billingService;
+        this.emailTokenService = emailTokenService;
+        this.mailService = mailService;
+        this.auditLogService = auditLogService;
     }
 
     private User getCurrentUser() {
@@ -54,12 +69,22 @@ public class CandidateService {
     }
 
     public List<Candidate> searchCandidatesByName(String name) {
-        return candidateRepository.findByNameContainingIgnoreCase(name);
+        User adminUser = getCurrentUser();
+        String organizationId = requireAdminOrganizationId(adminUser);
+
+        return candidateRepository.findByOrganizationIdAndNameContainingIgnoreCase(
+                organizationId,
+                name
+        );
     }
 
     public Candidate getCandidateById(String candidateId) {
-        return candidateRepository.findById(candidateId)
+        Candidate candidate = candidateRepository.findById(candidateId)
                 .orElseThrow(() -> new IllegalArgumentException("Candidate not found"));
+
+        validateCurrentUserCanAccessCandidate(candidate);
+
+        return candidate;
     }
 
     public TestResult submitTestResult(String candidateId, SubmitTestResultRequest request) {
@@ -92,13 +117,14 @@ public class CandidateService {
 
         return candidate.getTestResults();
     }
+
     public Candidate createCandidate(CreateCandidateRequest request) {
         User adminUser = getCurrentUser();
 
-        String organizationId = adminUser.getOrganizationId();
+        String organizationId = requireAdminOrganizationId(adminUser);
 
-        if (organizationId == null || organizationId.isBlank()) {
-            throw new RuntimeException("Admin is not linked to an organization.");
+        if (adminUser.getRole() == null || !adminUser.getRole().canInviteCandidates()) {
+            throw new RuntimeException("You are not allowed to invite candidates.");
         }
 
         billingService.ensureCanInviteCandidate(organizationId);
@@ -124,6 +150,73 @@ public class CandidateService {
                     candidate.setStatus("REGISTERED");
                 });
 
-        return candidateRepository.save(candidate);
+        Candidate savedCandidate = candidateRepository.save(candidate);
+
+        if ("INVITED".equals(savedCandidate.getStatus())) {
+            sendCandidateInviteEmail(savedCandidate);
+        }
+
+        auditLogService.record(
+                adminUser,
+                "CANDIDATE_INVITED",
+                "CANDIDATE",
+                savedCandidate.getId(),
+                Map.of(
+                        "candidateEmail", savedCandidate.getEmail(),
+                        "status", savedCandidate.getStatus()
+                )
+        );
+
+        return savedCandidate;
+    }
+
+    private void sendCandidateInviteEmail(Candidate candidate) {
+        String rawToken = emailTokenService.createCandidateInviteToken(candidate);
+
+        String inviteLink = UriComponentsBuilder
+                .fromUriString(frontendBaseUrl)
+                .path("/accept-invite")
+                .queryParam("token", rawToken)
+                .build()
+                .encode()
+                .toUriString();
+
+        mailService.sendCandidateInviteEmail(
+                candidate.getEmail(),
+                candidate.getName(),
+                inviteLink
+        );
+    }
+
+    private String requireAdminOrganizationId(User adminUser) {
+        String organizationId = adminUser.getOrganizationId();
+
+        if (organizationId == null || organizationId.isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        return organizationId;
+    }
+
+    private void validateCurrentUserCanAccessCandidate(Candidate candidate) {
+        User user = getCurrentUser();
+
+        if (user.getRole() != null && user.getRole().isOrganizationStaff()) {
+            String organizationId = requireAdminOrganizationId(user);
+
+            if (!organizationId.equals(candidate.getOrganizationId())) {
+                throw new RuntimeException("You are not allowed to access this candidate.");
+            }
+
+            return;
+        }
+
+        if (user.getRole() == Role.CANDIDATE &&
+                user.getId() != null &&
+                user.getId().equals(candidate.getUserId())) {
+            return;
+        }
+
+        throw new RuntimeException("You are not allowed to access this candidate.");
     }
 }

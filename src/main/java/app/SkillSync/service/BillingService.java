@@ -3,6 +3,7 @@ package app.SkillSync.service;
 import app.SkillSync.dto.BillingCheckoutSessionRequest;
 import app.SkillSync.dto.BillingSessionResponse;
 import app.SkillSync.dto.BillingSubscriptionResponse;
+import app.SkillSync.dto.SubscriptionPlanResponse;
 import app.SkillSync.model.BillingSubscription;
 import app.SkillSync.model.SubscriptionFeatures;
 import app.SkillSync.model.SubscriptionPlan;
@@ -31,10 +32,11 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 
 @Service
 public class BillingService {
@@ -44,6 +46,7 @@ public class BillingService {
     private final AssessmentRepository assessmentRepository;
     private final CandidateRepository candidateRepository;
     private final SubscriptionPlanRepository subscriptionPlanRepository;
+    private final AuditLogService auditLogService;
 
     @Value("${billing.enabled:false}")
     private boolean billingEnabled;
@@ -61,12 +64,14 @@ public class BillingService {
                           UserRepository userRepository,
                           AssessmentRepository assessmentRepository,
                           CandidateRepository candidateRepository,
-                          SubscriptionPlanRepository subscriptionPlanRepository) {
+                          SubscriptionPlanRepository subscriptionPlanRepository,
+                          AuditLogService auditLogService) {
         this.subscriptionRepository = subscriptionRepository;
         this.userRepository = userRepository;
         this.assessmentRepository = assessmentRepository;
         this.candidateRepository = candidateRepository;
         this.subscriptionPlanRepository = subscriptionPlanRepository;
+        this.auditLogService = auditLogService;
     }
 
     // ===================== Public Methods =====================
@@ -76,6 +81,21 @@ public class BillingService {
         String orgId = requireOrganizationId(user);
         BillingSubscription subscription = getOrCreateFreeSubscription(orgId);
         return buildResponse(subscription, orgId);
+    }
+
+    public List<SubscriptionPlanResponse> listPlans() {
+        return subscriptionPlanRepository.findAll()
+                .stream()
+                .filter(plan -> !Boolean.FALSE.equals(plan.getActive()))
+                .sorted(Comparator
+                        .comparing(
+                                (SubscriptionPlan plan) -> plan.getDisplayOrder() == null
+                                        ? Integer.MAX_VALUE
+                                        : plan.getDisplayOrder()
+                        )
+                        .thenComparing(plan -> planKey(plan), String.CASE_INSENSITIVE_ORDER))
+                .map(this::toPlanResponse)
+                .toList();
     }
 
     public BillingSessionResponse createCheckoutSession(BillingCheckoutSessionRequest request) {
@@ -108,6 +128,13 @@ public class BillingService {
                     .build();
 
             Session session = Session.create(params);
+            auditLogService.record(
+                    user,
+                    "BILLING_CHECKOUT_STARTED",
+                    "SUBSCRIPTION_PLAN",
+                    planKey(plan),
+                    Map.of("planId", planKey(plan))
+            );
             return new BillingSessionResponse(session.getUrl());
         } catch (StripeException e) {
             throw new RuntimeException("Unable to create Stripe checkout session.", e);
@@ -132,6 +159,14 @@ public class BillingService {
             com.stripe.model.billingportal.Session session =
                     com.stripe.model.billingportal.Session.create(params);
 
+            auditLogService.record(
+                    user,
+                    "BILLING_PORTAL_OPENED",
+                    "BILLING_SUBSCRIPTION",
+                    localSubscription.getId(),
+                    Map.of("customerConfigured", customerId != null && !customerId.isBlank())
+            );
+
             return new BillingSessionResponse(session.getUrl());
         } catch (StripeException e) {
             throw new RuntimeException("Unable to open Stripe billing portal.", e);
@@ -150,9 +185,14 @@ public class BillingService {
         if (limit.isAtLimit()) throw new IllegalArgumentException("Your plan has reached candidate invite limit.");
     }
 
+    public void ensureCanInviteTeamMember(String organizationId) {
+        UsageLimit limit = getUsageLimit(organizationId, "teamMembers");
+        if (limit.isAtLimit()) throw new IllegalArgumentException("Your plan has reached team member limit.");
+    }
+
     public void ensureFeatureAccess(String organizationId, String feature) {
         SubscriptionPlan plan = requireCurrentPlan(getOrCreateFreeSubscription(organizationId));
-        SubscriptionFeatures features = plan.getFeatures();
+        SubscriptionFeatures features = featuresOrDefault(plan);
         boolean hasAccess = switch (feature) {
             case "aiGeneration" -> Boolean.TRUE.equals(features.getAiGeneration());
             case "proctoring" -> Boolean.TRUE.equals(features.getProctoring());
@@ -167,17 +207,23 @@ public class BillingService {
     private UsageLimit getUsageLimit(String organizationId, String feature) {
         BillingSubscription subscription = getOrCreateFreeSubscription(organizationId);
         SubscriptionPlan plan = requireCurrentPlan(subscription);
-        SubscriptionFeatures features = plan.getFeatures();
+        SubscriptionFeatures features = featuresOrDefault(plan);
 
         long used = switch (feature) {
             case "activeAssessments" -> assessmentRepository.countByOrganizationId(organizationId);
             case "candidateInvites" -> candidateRepository.countByOrganizationIdAndCreatedAtBetween(organizationId, monthStart(), monthEnd());
+            case "teamMembers" -> userRepository.findByOrganizationId(organizationId)
+                    .stream()
+                    .filter(user -> user.getRole() != null && user.getRole().isOrganizationStaff())
+                    .filter(User::isActiveForLogin)
+                    .count();
             default -> 0;
         };
 
         Long limit = switch (feature) {
             case "activeAssessments" -> features.getActiveAssessments();
             case "candidateInvites" -> features.getCandidateInvites();
+            case "teamMembers" -> features.getTeamMembers();
             default -> null;
         };
 
@@ -290,6 +336,17 @@ public class BillingService {
         sub.setStatus("ACTIVE");
         sub.setUpdatedAt(Instant.now());
         subscriptionRepository.save(sub);
+        auditLogService.recordForOrganization(
+                null,
+                orgId,
+                "BILLING_CHECKOUT_COMPLETED",
+                "BILLING_SUBSCRIPTION",
+                sub.getId(),
+                Map.of(
+                        "planId", planKey(plan),
+                        "hasStripeSubscription", session.getSubscription() != null
+                )
+        );
     }
 
     private void handleSubscriptionEvent(Event event) {
@@ -312,6 +369,14 @@ public class BillingService {
         sub.setUpdatedAt(Instant.now());
 
         subscriptionRepository.save(sub);
+        auditLogService.recordForOrganization(
+                null,
+                sub.getOrganizationId(),
+                "BILLING_SUBSCRIPTION_UPDATED",
+                "BILLING_SUBSCRIPTION",
+                sub.getId(),
+                Map.of("planId", planKey(plan), "status", sub.getStatus())
+        );
     }
 
     private SubscriptionPlan requirePlan(String planId) {
@@ -327,17 +392,38 @@ public class BillingService {
     }
 
     private SubscriptionPlan requireCurrentPlan(BillingSubscription subscription) {
+        if (!isSubscriptionEntitled(subscription)) return requireFreePlan();
         if (subscription.getPlanId() == null || subscription.getPlanId().isBlank()) return requireFreePlan();
         return subscriptionPlanRepository.findFirstByCodeIgnoreCase(subscription.getPlanId())
                 .or(() -> subscriptionPlanRepository.findFirstByNameIgnoreCase(subscription.getPlanId()))
                 .orElseThrow(() -> new IllegalStateException("Subscription plan not configured: " + subscription.getPlanId()));
     }
+
+    private boolean isSubscriptionEntitled(BillingSubscription subscription) {
+        String status = subscription.getStatus();
+        if (status == null || status.isBlank()) {
+            return true;
+        }
+
+        String normalizedStatus = status.trim().toUpperCase(Locale.ROOT);
+        return normalizedStatus.equals("FREE") ||
+                normalizedStatus.equals("ACTIVE") ||
+                normalizedStatus.equals("TRIALING");
+    }
+
     private Map<String, Object> buildUsage(String orgId, SubscriptionPlan plan) {
-        SubscriptionFeatures f = plan.getFeatures();
+        SubscriptionFeatures f = featuresOrDefault(plan);
         Map<String, Object> usage = new HashMap<>();
         usage.put("activeAssessments", assessmentRepository.countByOrganizationId(orgId));
         usage.put("candidateInvites", candidateRepository.countByOrganizationIdAndCreatedAtBetween(orgId, monthStart(), monthEnd()));
-        usage.put("teamMembers", f.getTeamMembers());
+        usage.put(
+                "teamMembers",
+                userRepository.findByOrganizationId(orgId)
+                        .stream()
+                        .filter(user -> user.getRole() != null && user.getRole().isOrganizationStaff())
+                        .filter(User::isActiveForLogin)
+                        .count()
+        );
         usage.put("aiGeneration", f.getAiGeneration());
         usage.put("proctoring", f.getProctoring());
         usage.put("branding", f.getBranding());
@@ -350,14 +436,37 @@ public class BillingService {
         response.setStatus(subscription.getStatus() == null ? "FREE" : subscription.getStatus());
         response.setBillingPeriodEndsAt(subscription.getBillingPeriodEndsAt());
         response.setUsage(buildUsage(organizationId, plan));
+        response.setPlan(toPlanResponse(plan));
         return response;
     }
     public void ensureCanUseAiGeneration(String organizationId) {
         SubscriptionPlan plan = requireCurrentPlan(getOrCreateFreeSubscription(organizationId));
-        SubscriptionFeatures features = plan.getFeatures();
+        SubscriptionFeatures features = featuresOrDefault(plan);
 
         if (!Boolean.TRUE.equals(features.getAiGeneration())) {
             throw new IllegalArgumentException("AI generation feature is not available on your current plan.");
         }
+    }
+
+    private SubscriptionPlanResponse toPlanResponse(SubscriptionPlan plan) {
+        SubscriptionPlanResponse response = new SubscriptionPlanResponse();
+        response.setId(plan.getId());
+        response.setCode(planKey(plan));
+        response.setName(plan.getName());
+        response.setDescription(plan.getDescription());
+        response.setPricing(plan.getPricing());
+        response.setCurrency(plan.getCurrency());
+        response.setBillingCycle(plan.getBillingCycle());
+        response.setFeatures(featuresOrDefault(plan));
+        response.setHighlights(plan.getHighlights());
+        response.setRecommended(plan.getRecommended());
+        response.setActive(plan.getActive());
+        response.setIsFree(plan.getIsFree());
+        response.setDisplayOrder(plan.getDisplayOrder());
+        return response;
+    }
+
+    private SubscriptionFeatures featuresOrDefault(SubscriptionPlan plan) {
+        return plan.getFeatures() == null ? new SubscriptionFeatures() : plan.getFeatures();
     }
 }

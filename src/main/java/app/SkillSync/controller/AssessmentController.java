@@ -4,7 +4,9 @@ import app.SkillSync.dto.AssignAssessmentRequest;
 import app.SkillSync.dto.AssignmentRunResult;
 import app.SkillSync.dto.CreateAssessmentRequest;
 import app.SkillSync.dto.GradeAssignmentRequest;
+import app.SkillSync.dto.RecordIntegrityEventRequest;
 import app.SkillSync.dto.RunCodeRequest;
+import app.SkillSync.dto.SaveAssignmentDraftRequest;
 import app.SkillSync.dto.SectionAttemptRequest;
 import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.model.Assessment;
@@ -28,7 +30,7 @@ public class AssessmentController {
         this.assessmentService = assessmentService;
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER')")
     @PostMapping
     public ResponseEntity<Assessment> createAssessment(
             @Valid @RequestBody CreateAssessmentRequest request
@@ -37,13 +39,13 @@ public class AssessmentController {
         return ResponseEntity.status(HttpStatus.CREATED).body(assessment);
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR')")
     @GetMapping
     public ResponseEntity<List<Assessment>> getAllAssessments() {
         return ResponseEntity.ok(assessmentService.getAllAssessments());
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER')")
     @PostMapping("/assign")
     public ResponseEntity<AssessmentAssignment> assignAssessment(
             @Valid @RequestBody AssignAssessmentRequest request
@@ -52,7 +54,7 @@ public class AssessmentController {
         return ResponseEntity.status(HttpStatus.CREATED).body(assignment);
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR')")
     @GetMapping("/assignments")
     public ResponseEntity<List<AssessmentAssignment>> getAllAssignments() {
         return ResponseEntity.ok(assessmentService.getAllAssignments());
@@ -102,6 +104,34 @@ public class AssessmentController {
     }
 
     @PreAuthorize("hasRole('CANDIDATE')")
+    @PatchMapping("/assignments/{assignmentId}/draft")
+    public ResponseEntity<AssessmentAssignment> saveAssignmentDraft(
+            @PathVariable String assignmentId,
+            @Valid @RequestBody SaveAssignmentDraftRequest request
+    ) {
+        AssessmentAssignment assignment = assessmentService.saveAssignmentDraft(
+                assignmentId,
+                request
+        );
+
+        return ResponseEntity.ok(assignment);
+    }
+
+    @PreAuthorize("hasRole('CANDIDATE')")
+    @PostMapping("/assignments/{assignmentId}/integrity-events")
+    public ResponseEntity<AssessmentAssignment> recordIntegrityEvent(
+            @PathVariable String assignmentId,
+            @Valid @RequestBody RecordIntegrityEventRequest request
+    ) {
+        AssessmentAssignment assignment = assessmentService.recordIntegrityEvent(
+                assignmentId,
+                request
+        );
+
+        return ResponseEntity.ok(assignment);
+    }
+
+    @PreAuthorize("hasRole('CANDIDATE')")
     @PostMapping("/assignments/{assignmentId}/submit")
     public ResponseEntity<AssessmentAssignment> submitAssignment(
             @PathVariable String assignmentId,
@@ -115,7 +145,7 @@ public class AssessmentController {
         return ResponseEntity.ok(assignment);
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','HIRING_MANAGER','EVALUATOR')")
     @PatchMapping("/assignments/{assignmentId}/grade")
     public ResponseEntity<AssessmentAssignment> gradeAssignment(
             @PathVariable String assignmentId,
@@ -129,7 +159,7 @@ public class AssessmentController {
         return ResponseEntity.ok(assignment);
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','HIRING_MANAGER','EVALUATOR')")
     @PostMapping("/assignments/{assignmentId}/execute")
     public ResponseEntity<AssessmentAssignment> executeAssignment(
             @PathVariable String assignmentId

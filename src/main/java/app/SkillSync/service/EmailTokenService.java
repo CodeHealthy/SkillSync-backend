@@ -1,7 +1,9 @@
 package app.SkillSync.service;
 
 import app.SkillSync.model.AuthTokenType;
+import app.SkillSync.model.Candidate;
 import app.SkillSync.model.EmailToken;
+import app.SkillSync.model.Role;
 import app.SkillSync.model.User;
 import app.SkillSync.repository.EmailTokenRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,6 +32,12 @@ public class EmailTokenService {
     @Value("${app.auth.password-reset-expiration-minutes:30}")
     private long passwordResetExpirationMinutes;
 
+    @Value("${app.auth.candidate-invite-expiration-minutes:10080}")
+    private long candidateInviteExpirationMinutes;
+
+    @Value("${app.auth.team-member-invite-expiration-minutes:10080}")
+    private long teamMemberInviteExpirationMinutes;
+
     public EmailTokenService(EmailTokenRepository emailTokenRepository) {
         this.emailTokenRepository = emailTokenRepository;
     }
@@ -40,6 +48,37 @@ public class EmailTokenService {
 
     public String createPasswordResetToken(User user) {
         return createToken(user, AuthTokenType.PASSWORD_RESET, passwordResetExpirationMinutes);
+    }
+
+    public String createCandidateInviteToken(Candidate candidate) {
+        return createToken(
+                null,
+                candidate.getId(),
+                null,
+                candidate.getEmail(),
+                null,
+                null,
+                AuthTokenType.CANDIDATE_INVITE,
+                candidateInviteExpirationMinutes
+        );
+    }
+
+    public String createTeamMemberInviteToken(
+            String email,
+            String organizationId,
+            String recipientName,
+            Role invitedRole
+    ) {
+        return createToken(
+                null,
+                null,
+                organizationId,
+                email,
+                recipientName,
+                invitedRole,
+                AuthTokenType.TEAM_MEMBER_INVITE,
+                teamMemberInviteExpirationMinutes
+        );
     }
 
     public EmailToken validateToken(String rawToken, AuthTokenType type) {
@@ -65,11 +104,37 @@ public class EmailTokenService {
     }
 
     private String createToken(User user, AuthTokenType type, long expirationMinutes) {
+        return createToken(
+                user.getId(),
+                null,
+                null,
+                user.getEmail(),
+                null,
+                null,
+                type,
+                expirationMinutes
+        );
+    }
+
+    private String createToken(
+            String userId,
+            String candidateId,
+            String organizationId,
+            String email,
+            String recipientName,
+            Role invitedRole,
+            AuthTokenType type,
+            long expirationMinutes
+    ) {
         String rawToken = generateRawToken();
 
         EmailToken token = new EmailToken();
-        token.setUserId(user.getId());
-        token.setEmail(user.getEmail());
+        token.setUserId(userId);
+        token.setCandidateId(candidateId);
+        token.setOrganizationId(organizationId);
+        token.setEmail(email);
+        token.setRecipientName(recipientName);
+        token.setInvitedRole(invitedRole);
         token.setTokenHash(hashToken(rawToken));
         token.setType(type);
         token.setCreatedAt(Instant.now());

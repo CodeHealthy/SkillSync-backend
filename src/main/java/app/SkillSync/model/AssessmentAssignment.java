@@ -33,6 +33,7 @@ public class AssessmentAssignment {
     private List<TestCaseExecutionResult> testCaseResults = new ArrayList<>();
     private List<QuestionReview> questionReviews = new ArrayList<>();
     private List<AssessmentSectionAttempt> sectionAttempts = new ArrayList<>();
+    private List<AssessmentIntegrityEvent> integrityEvents = new ArrayList<>();
 
     private String candidateId;
     private String candidateName;
@@ -43,6 +44,9 @@ public class AssessmentAssignment {
     private String submittedAnswer;
     private String submittedCode;
     private java.util.Map<String, String> submittedAnswers = new java.util.HashMap<>();
+    private String draftCode;
+    private java.util.Map<String, String> draftAnswers = new java.util.HashMap<>();
+    private Instant draftSavedAt;
     private Boolean autoSubmitted;
 
     private String executionStatus;
@@ -50,6 +54,13 @@ public class AssessmentAssignment {
     private String executionError;
 
     private Integer score;
+    private Integer autoScore;
+    private Integer codingScore;
+    private Integer multipleChoiceScore;
+    private Integer manualReviewScore;
+    private Integer reviewedQuestionCount;
+    private Integer totalQuestionCount;
+    private String reviewStatus;
     private String feedback;
 
     private Instant assignedAt;
@@ -123,6 +134,10 @@ public class AssessmentAssignment {
         return sectionAttempts;
     }
 
+    public List<AssessmentIntegrityEvent> getIntegrityEvents() {
+        return integrityEvents;
+    }
+
     public String getCandidateId() {
         return candidateId;
     }
@@ -151,6 +166,18 @@ public class AssessmentAssignment {
         return submittedAnswers;
     }
 
+    public String getDraftCode() {
+        return draftCode;
+    }
+
+    public java.util.Map<String, String> getDraftAnswers() {
+        return draftAnswers;
+    }
+
+    public Instant getDraftSavedAt() {
+        return draftSavedAt;
+    }
+
     public Boolean getAutoSubmitted() {
         return autoSubmitted;
     }
@@ -169,6 +196,34 @@ public class AssessmentAssignment {
 
     public Integer getScore() {
         return score;
+    }
+
+    public Integer getAutoScore() {
+        return autoScore;
+    }
+
+    public Integer getCodingScore() {
+        return codingScore;
+    }
+
+    public Integer getMultipleChoiceScore() {
+        return multipleChoiceScore;
+    }
+
+    public Integer getManualReviewScore() {
+        return manualReviewScore;
+    }
+
+    public Integer getReviewedQuestionCount() {
+        return reviewedQuestionCount;
+    }
+
+    public Integer getTotalQuestionCount() {
+        return totalQuestionCount;
+    }
+
+    public String getReviewStatus() {
+        return reviewStatus;
     }
 
     public String getFeedback() {
@@ -275,6 +330,10 @@ public class AssessmentAssignment {
         this.sectionAttempts = sectionAttempts == null ? new ArrayList<>() : sectionAttempts;
     }
 
+    public void setIntegrityEvents(List<AssessmentIntegrityEvent> integrityEvents) {
+        this.integrityEvents = integrityEvents == null ? new ArrayList<>() : integrityEvents;
+    }
+
     public void setCandidateId(String candidateId) {
         this.candidateId = candidateId;
     }
@@ -303,6 +362,18 @@ public class AssessmentAssignment {
         this.submittedAnswers = submittedAnswers == null ? new java.util.HashMap<>() : submittedAnswers;
     }
 
+    public void setDraftCode(String draftCode) {
+        this.draftCode = draftCode;
+    }
+
+    public void setDraftAnswers(java.util.Map<String, String> draftAnswers) {
+        this.draftAnswers = draftAnswers == null ? new java.util.HashMap<>() : draftAnswers;
+    }
+
+    public void setDraftSavedAt(Instant draftSavedAt) {
+        this.draftSavedAt = draftSavedAt;
+    }
+
     public void setAutoSubmitted(Boolean autoSubmitted) {
         this.autoSubmitted = autoSubmitted;
     }
@@ -321,6 +392,34 @@ public class AssessmentAssignment {
 
     public void setScore(Integer score) {
         this.score = score;
+    }
+
+    public void setAutoScore(Integer autoScore) {
+        this.autoScore = autoScore;
+    }
+
+    public void setCodingScore(Integer codingScore) {
+        this.codingScore = codingScore;
+    }
+
+    public void setMultipleChoiceScore(Integer multipleChoiceScore) {
+        this.multipleChoiceScore = multipleChoiceScore;
+    }
+
+    public void setManualReviewScore(Integer manualReviewScore) {
+        this.manualReviewScore = manualReviewScore;
+    }
+
+    public void setReviewedQuestionCount(Integer reviewedQuestionCount) {
+        this.reviewedQuestionCount = reviewedQuestionCount;
+    }
+
+    public void setTotalQuestionCount(Integer totalQuestionCount) {
+        this.totalQuestionCount = totalQuestionCount;
+    }
+
+    public void setReviewStatus(String reviewStatus) {
+        this.reviewStatus = reviewStatus;
     }
 
     public void setFeedback(String feedback) {

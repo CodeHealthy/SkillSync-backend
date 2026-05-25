@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -24,6 +25,9 @@ class CandidateServiceTest {
     private CandidateRepository candidateRepository;
     private UserRepository userRepository;
     private BillingService billingService;
+    private EmailTokenService emailTokenService;
+    private MailService mailService;
+    private AuditLogService auditLogService;
     private CandidateService candidateService;
 
     @BeforeEach
@@ -31,10 +35,21 @@ class CandidateServiceTest {
         candidateRepository = mock(CandidateRepository.class);
         userRepository = mock(UserRepository.class);
         billingService = mock(BillingService.class);
+        emailTokenService = mock(EmailTokenService.class);
+        mailService = mock(MailService.class);
+        auditLogService = mock(AuditLogService.class);
         candidateService = new CandidateService(
                 candidateRepository,
                 userRepository,
-                billingService
+                billingService,
+                emailTokenService,
+                mailService,
+                auditLogService
+        );
+        ReflectionTestUtils.setField(
+                candidateService,
+                "frontendBaseUrl",
+                "http://localhost:3000"
         );
     }
 
@@ -53,6 +68,7 @@ class CandidateServiceTest {
                 .thenReturn(false);
         when(userRepository.findByEmail("candidate@example.com")).thenReturn(Optional.empty());
         when(candidateRepository.save(any(Candidate.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(emailTokenService.createCandidateInviteToken(any(Candidate.class))).thenReturn("invite-token");
 
         CreateCandidateRequest request = createCandidateRequest(
                 " Candidate Demo ",
@@ -70,6 +86,11 @@ class CandidateServiceTest {
         assertNotNull(savedCandidate.getCreatedAt());
 
         verify(candidateRepository).save(any(Candidate.class));
+        verify(mailService).sendCandidateInviteEmail(
+                eq("candidate@example.com"),
+                eq("Candidate Demo"),
+                contains("/accept-invite?token=invite-token")
+        );
     }
 
     @Test
@@ -144,6 +165,8 @@ class CandidateServiceTest {
         assertEquals("user-candidate-1", savedCandidate.getUserId());
         assertEquals("REGISTERED", savedCandidate.getStatus());
         assertEquals("org-1", savedCandidate.getOrganizationId());
+        verify(emailTokenService, never()).createCandidateInviteToken(any(Candidate.class));
+        verify(mailService, never()).sendCandidateInviteEmail(anyString(), anyString(), anyString());
     }
 
     @Test
@@ -161,6 +184,7 @@ class CandidateServiceTest {
                 .thenReturn(false);
         when(userRepository.findByEmail("candidate@example.com")).thenReturn(Optional.of(existingAdminUser));
         when(candidateRepository.save(any(Candidate.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(emailTokenService.createCandidateInviteToken(any(Candidate.class))).thenReturn("invite-token");
 
         CreateCandidateRequest request = createCandidateRequest(
                 "Candidate Demo",
@@ -171,6 +195,11 @@ class CandidateServiceTest {
 
         assertNull(savedCandidate.getUserId());
         assertEquals("INVITED", savedCandidate.getStatus());
+        verify(mailService).sendCandidateInviteEmail(
+                eq("candidate@example.com"),
+                eq("Candidate Demo"),
+                contains("/accept-invite?token=invite-token")
+        );
     }
 
     @Test
@@ -192,6 +221,58 @@ class CandidateServiceTest {
         assertEquals("candidate-2", candidates.get(1).getId());
 
         verify(candidateRepository).findByOrganizationId("org-1");
+    }
+
+    @Test
+    void searchCandidatesByName_returnsOnlyCandidatesFromAdminOrganization() {
+        User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
+
+        Candidate candidateOne = candidate("candidate-1", "Candidate One", "one@example.com", "org-1");
+
+        setAuthenticatedUser(admin.getEmail());
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(candidateRepository.findByOrganizationIdAndNameContainingIgnoreCase("org-1", "Candidate"))
+                .thenReturn(List.of(candidateOne));
+
+        List<Candidate> candidates = candidateService.searchCandidatesByName("Candidate");
+
+        assertEquals(1, candidates.size());
+        assertEquals("candidate-1", candidates.get(0).getId());
+
+        verify(candidateRepository).findByOrganizationIdAndNameContainingIgnoreCase("org-1", "Candidate");
+        verify(candidateRepository, never()).findByNameContainingIgnoreCase(anyString());
+    }
+
+    @Test
+    void getCandidateById_whenAdminDoesNotOwnCandidate_throwsRuntimeException() {
+        User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
+        Candidate candidate = candidate("candidate-1", "Candidate One", "one@example.com", "org-2");
+
+        setAuthenticatedUser(admin.getEmail());
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(candidateRepository.findById("candidate-1")).thenReturn(Optional.of(candidate));
+
+        RuntimeException exception = assertThrows(
+                RuntimeException.class,
+                () -> candidateService.getCandidateById("candidate-1")
+        );
+
+        assertEquals("You are not allowed to access this candidate.", exception.getMessage());
+    }
+
+    @Test
+    void getCandidateById_whenCandidateOwnsProfile_returnsCandidate() {
+        User candidateUser = candidateUser("user-candidate-1", "candidate@example.com");
+        Candidate candidate = candidate("candidate-1", "Candidate One", "candidate@example.com", "org-1");
+        candidate.setUserId("user-candidate-1");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(candidateRepository.findById("candidate-1")).thenReturn(Optional.of(candidate));
+
+        Candidate result = candidateService.getCandidateById("candidate-1");
+
+        assertEquals("candidate-1", result.getId());
     }
 
     @Test
@@ -233,6 +314,14 @@ class CandidateServiceTest {
         user.setEmail(email);
         user.setRole(Role.ADMIN);
         user.setOrganizationId(organizationId);
+        return user;
+    }
+
+    private User candidateUser(String id, String email) {
+        User user = new User();
+        user.setId(id);
+        user.setEmail(email);
+        user.setRole(Role.CANDIDATE);
         return user;
     }
 

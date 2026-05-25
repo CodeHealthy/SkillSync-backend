@@ -14,6 +14,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -34,6 +36,8 @@ import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 
 @Service
 public class AiAssessmentService {
+
+    private static final Logger log = LoggerFactory.getLogger(AiAssessmentService.class);
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -120,8 +124,7 @@ public class AiAssessmentService {
             }
 
             if (response.statusCode() == 503) {
-                System.out.println("Gemini status code: " + response.statusCode());
-                System.out.println("Gemini response body: " + response.body());
+                log.warn("Gemini provider unavailable. status={}", response.statusCode());
 
                 throw new ResponseStatusException(
                         SERVICE_UNAVAILABLE,
@@ -130,8 +133,7 @@ public class AiAssessmentService {
             }
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                System.out.println("Gemini status code: " + response.statusCode());
-                System.out.println("Gemini response body: " + response.body());
+                log.warn("Gemini provider returned an error. status={}", response.statusCode());
 
                 throw new ResponseStatusException(
                         BAD_GATEWAY,
@@ -157,7 +159,7 @@ public class AiAssessmentService {
                     "AI generation was interrupted. Please try again."
             );
         } catch (Exception ex) {
-            System.out.println("AI generation error: " + ex.getMessage());
+            log.warn("AI assessment generation failed: {}", ex.getMessage());
 
             throw new ResponseStatusException(
                     BAD_GATEWAY,

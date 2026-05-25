@@ -1,6 +1,10 @@
 package app.SkillSync.controller;
 
+import app.SkillSync.dto.AcceptCandidateInviteRequest;
+import app.SkillSync.dto.AcceptTeamInviteRequest;
 import app.SkillSync.dto.AuthResponse;
+import app.SkillSync.dto.CandidateInvitePreviewResponse;
+import app.SkillSync.dto.TeamInvitePreviewResponse;
 import app.SkillSync.dto.ForgotPasswordRequest;
 import app.SkillSync.dto.LoginRequest;
 import app.SkillSync.dto.RegisterRequest;
@@ -106,6 +110,35 @@ public class AuthController {
         return ResponseEntity.ok(
                 Map.of("message", "Password reset successfully. You can now log in.")
         );
+    }
+
+    @GetMapping("/invite")
+    public ResponseEntity<CandidateInvitePreviewResponse> getCandidateInvite(
+            @RequestParam String token
+    ) {
+        return ResponseEntity.ok(authService.getCandidateInvite(token));
+    }
+
+    @PostMapping("/accept-invite")
+    public ResponseEntity<AuthResponse> acceptCandidateInvite(
+            @Valid @RequestBody AcceptCandidateInviteRequest request
+    ) {
+        return ResponseEntity.ok(authService.acceptCandidateInvite(request));
+    }
+
+    @GetMapping("/team-invite")
+    public ResponseEntity<TeamInvitePreviewResponse> getTeamInvite(
+            @RequestParam String token,
+            @RequestParam(required = false) String name
+    ) {
+        return ResponseEntity.ok(authService.getTeamInvite(token, name));
+    }
+
+    @PostMapping("/accept-team-invite")
+    public ResponseEntity<AuthResponse> acceptTeamInvite(
+            @Valid @RequestBody AcceptTeamInviteRequest request
+    ) {
+        return ResponseEntity.ok(authService.acceptTeamInvite(request));
     }
 
     private String buildRateLimitKey(HttpServletRequest request, String email) {

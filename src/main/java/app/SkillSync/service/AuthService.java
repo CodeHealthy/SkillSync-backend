@@ -1,6 +1,10 @@
 package app.SkillSync.service;
 
 import app.SkillSync.dto.AuthResponse;
+import app.SkillSync.dto.AcceptCandidateInviteRequest;
+import app.SkillSync.dto.AcceptTeamInviteRequest;
+import app.SkillSync.dto.CandidateInvitePreviewResponse;
+import app.SkillSync.dto.TeamInvitePreviewResponse;
 import app.SkillSync.dto.ForgotPasswordRequest;
 import app.SkillSync.dto.LoginRequest;
 import app.SkillSync.dto.RegisterRequest;
@@ -27,6 +31,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class AuthService {
@@ -41,6 +46,7 @@ public class AuthService {
     private final OrganizationRepository organizationRepository;
     private final EmailTokenService emailTokenService;
     private final MailService mailService;
+    private final AuditLogService auditLogService;
 
     @Value("${app.frontend.base-url:http://localhost:3000}")
     private String frontendBaseUrl;
@@ -53,7 +59,8 @@ public class AuthService {
             CandidateRepository candidateRepository,
             OrganizationRepository organizationRepository,
             EmailTokenService emailTokenService,
-            MailService mailService
+            MailService mailService,
+            AuditLogService auditLogService
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
@@ -63,6 +70,7 @@ public class AuthService {
         this.organizationRepository = organizationRepository;
         this.emailTokenService = emailTokenService;
         this.mailService = mailService;
+        this.auditLogService = auditLogService;
     }
 
     public void register(RegisterRequest request) {
@@ -72,7 +80,13 @@ public class AuthService {
             throw new IllegalArgumentException("Email is already registered");
         }
 
-        Role role = request.getRole() != null ? request.getRole() : Role.CANDIDATE;
+        Role role = request.getRole() != null ? request.getRole() : Role.ORG_ADMIN;
+
+        if (!role.isOrganizationAdmin()) {
+            throw new IllegalArgumentException(
+                    "Only organization admin employer accounts can be created through public signup."
+            );
+        }
 
         User user = new User();
         user.setFullName(normalizeRequiredText(request.getFullName(), "Full name is required"));
@@ -82,8 +96,9 @@ public class AuthService {
         user.setCreatedAt(Instant.now());
         user.setEmailVerified(false);
         user.setEmailVerifiedAt(null);
+        user.setActive(true);
 
-        if (role == Role.ADMIN) {
+        if (role.isOrganizationAdmin()) {
             String organizationName = normalizeRequiredText(
                     request.getOrganizationName(),
                     "Organization name is required for admin registration."
@@ -99,6 +114,15 @@ public class AuthService {
 
         User savedUser = userRepository.save(user);
 
+        auditLogService.recordForOrganization(
+                savedUser,
+                savedUser.getOrganizationId(),
+                "ORG_REGISTERED",
+                "ORGANIZATION",
+                savedUser.getOrganizationId(),
+                Map.of("email", savedUser.getEmail(), "role", savedUser.getRole())
+        );
+
         sendVerificationEmail(savedUser);
     }
 
@@ -113,6 +137,13 @@ public class AuthService {
                     )
             );
         } catch (AuthenticationException exception) {
+            auditLogService.recordUnauthenticated(
+                    "LOGIN_FAILED",
+                    "USER",
+                    null,
+                    normalizedEmail,
+                    Map.of("reason", INVALID_LOGIN_MESSAGE)
+            );
             throw new IllegalArgumentException(INVALID_LOGIN_MESSAGE);
         }
 
@@ -120,8 +151,34 @@ public class AuthService {
                 .orElseThrow(() -> new IllegalArgumentException(INVALID_LOGIN_MESSAGE));
 
         if (!user.isEmailVerifiedForLogin()) {
+            auditLogService.record(
+                    user,
+                    "LOGIN_BLOCKED",
+                    "USER",
+                    user.getId(),
+                    Map.of("reason", "EMAIL_UNVERIFIED")
+            );
             throw new IllegalArgumentException("Please verify your email before logging in.");
         }
+
+        if (!user.isActiveForLogin()) {
+            auditLogService.record(
+                    user,
+                    "LOGIN_BLOCKED",
+                    "USER",
+                    user.getId(),
+                    Map.of("reason", "ACCOUNT_DEACTIVATED")
+            );
+            throw new IllegalArgumentException("This account has been deactivated.");
+        }
+
+        auditLogService.record(
+                user,
+                "LOGIN_SUCCESS",
+                "USER",
+                user.getId(),
+                Map.of("role", user.getRole())
+        );
 
         return buildAuthResponse(user);
     }
@@ -183,6 +240,133 @@ public class AuthService {
         emailTokenService.markUsed(token);
     }
 
+    public CandidateInvitePreviewResponse getCandidateInvite(String rawToken) {
+        EmailToken token = emailTokenService.validateToken(
+                rawToken,
+                AuthTokenType.CANDIDATE_INVITE
+        );
+
+        Candidate candidate = findInvitedCandidate(token);
+        String organizationName = organizationRepository
+                .findById(candidate.getOrganizationId())
+                .map(Organization::getName)
+                .orElse(null);
+
+        return new CandidateInvitePreviewResponse(
+                candidate.getId(),
+                candidate.getName(),
+                candidate.getEmail(),
+                organizationName
+        );
+    }
+
+    public AuthResponse acceptCandidateInvite(AcceptCandidateInviteRequest request) {
+        EmailToken token = emailTokenService.validateToken(
+                request.getToken(),
+                AuthTokenType.CANDIDATE_INVITE
+        );
+
+        Candidate candidate = findInvitedCandidate(token);
+        String normalizedEmail = normalizeEmail(candidate.getEmail());
+
+        if (userRepository.existsByEmail(normalizedEmail)) {
+            throw new IllegalArgumentException(
+                    "An account already exists for this invite email. Please log in instead."
+            );
+        }
+
+        User user = new User();
+        user.setFullName(normalizeRequiredText(request.getFullName(), "Full name is required"));
+        user.setEmail(normalizedEmail);
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setRole(Role.CANDIDATE);
+        user.setCreatedAt(Instant.now());
+        user.setEmailVerified(true);
+        user.setEmailVerifiedAt(Instant.now());
+        user.setActive(true);
+
+        User savedUser = userRepository.save(user);
+
+        candidate.setUserId(savedUser.getId());
+        candidate.setStatus("REGISTERED");
+        candidateRepository.save(candidate);
+
+        emailTokenService.markUsed(token);
+
+        auditLogService.recordForOrganization(
+                savedUser,
+                candidate.getOrganizationId(),
+                "CANDIDATE_INVITE_ACCEPTED",
+                "CANDIDATE",
+                candidate.getId(),
+                Map.of("email", savedUser.getEmail())
+        );
+
+        return buildAuthResponse(savedUser);
+    }
+
+    public TeamInvitePreviewResponse getTeamInvite(String rawToken, String fallbackName) {
+        EmailToken token = emailTokenService.validateToken(
+                rawToken,
+                AuthTokenType.TEAM_MEMBER_INVITE
+        );
+
+        Organization organization = findInviteOrganization(token);
+
+        return new TeamInvitePreviewResponse(
+                normalizeOptionalText(
+                        token.getRecipientName() != null
+                                ? token.getRecipientName()
+                                : fallbackName
+                ),
+                token.getEmail(),
+                organization.getName(),
+                token.getInvitedRole() != null ? token.getInvitedRole() : Role.RECRUITER
+        );
+    }
+
+    public AuthResponse acceptTeamInvite(AcceptTeamInviteRequest request) {
+        EmailToken token = emailTokenService.validateToken(
+                request.getToken(),
+                AuthTokenType.TEAM_MEMBER_INVITE
+        );
+
+        Organization organization = findInviteOrganization(token);
+        String normalizedEmail = normalizeEmail(token.getEmail());
+
+        if (userRepository.existsByEmail(normalizedEmail)) {
+            throw new IllegalArgumentException(
+                    "An account already exists for this invite email. Please log in instead."
+            );
+        }
+
+        User user = new User();
+        user.setFullName(normalizeRequiredText(request.getFullName(), "Full name is required"));
+        user.setEmail(normalizedEmail);
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setRole(token.getInvitedRole() != null ? token.getInvitedRole() : Role.RECRUITER);
+        user.setOrganizationId(organization.getId());
+        user.setCreatedAt(Instant.now());
+        user.setEmailVerified(true);
+        user.setEmailVerifiedAt(Instant.now());
+        user.setActive(true);
+
+        User savedUser = userRepository.save(user);
+
+        emailTokenService.markUsed(token);
+
+        auditLogService.recordForOrganization(
+                savedUser,
+                savedUser.getOrganizationId(),
+                "TEAM_INVITE_ACCEPTED",
+                "USER",
+                savedUser.getId(),
+                Map.of("email", savedUser.getEmail(), "role", savedUser.getRole())
+        );
+
+        return buildAuthResponse(savedUser);
+    }
+
     private void sendVerificationEmail(User user) {
         String rawToken = emailTokenService.createEmailVerificationToken(user);
 
@@ -230,6 +414,34 @@ public class AuthService {
         }
     }
 
+    private Candidate findInvitedCandidate(EmailToken token) {
+        if (token.getCandidateId() == null || token.getCandidateId().isBlank()) {
+            throw new IllegalArgumentException("Invalid or expired token.");
+        }
+
+        Candidate candidate = candidateRepository.findById(token.getCandidateId())
+                .orElseThrow(() -> new IllegalArgumentException("Candidate invite not found."));
+
+        if (!candidate.getEmail().equalsIgnoreCase(token.getEmail())) {
+            throw new IllegalArgumentException("Invalid or expired token.");
+        }
+
+        if (candidate.getUserId() != null || "REGISTERED".equals(candidate.getStatus())) {
+            throw new IllegalArgumentException("This invite has already been accepted.");
+        }
+
+        return candidate;
+    }
+
+    private Organization findInviteOrganization(EmailToken token) {
+        if (token.getOrganizationId() == null || token.getOrganizationId().isBlank()) {
+            throw new IllegalArgumentException("Invalid or expired token.");
+        }
+
+        return organizationRepository.findById(token.getOrganizationId())
+                .orElseThrow(() -> new IllegalArgumentException("Organization invite not found."));
+    }
+
     private AuthResponse buildAuthResponse(User user) {
         String token = jwtService.generateToken(user);
 
@@ -253,6 +465,14 @@ public class AuthService {
     private String normalizeRequiredText(String value, String message) {
         if (value == null || value.trim().isBlank()) {
             throw new IllegalArgumentException(message);
+        }
+
+        return value.trim();
+    }
+
+    private String normalizeOptionalText(String value) {
+        if (value == null || value.trim().isBlank()) {
+            return "";
         }
 
         return value.trim();

@@ -19,7 +19,7 @@ public class AiAssessmentController {
     }
 
     @PostMapping("/generate")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER')")
     public AiAssessmentResponse generateAssessment(@Valid @RequestBody AiAssessmentRequest request) {
         return aiAssessmentService.generateAssessment(request);
     }

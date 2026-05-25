@@ -9,6 +9,7 @@ public class BillingSubscriptionResponse {
     private String status;
     private Instant billingPeriodEndsAt;
     private Map<String, Object> usage;
+    private SubscriptionPlanResponse plan;
 
     public String getPlanId() {
         return planId;
@@ -26,6 +27,10 @@ public class BillingSubscriptionResponse {
         return usage;
     }
 
+    public SubscriptionPlanResponse getPlan() {
+        return plan;
+    }
+
     public void setPlanId(String planId) {
         this.planId = planId;
     }
@@ -40,5 +45,9 @@ public class BillingSubscriptionResponse {
 
     public void setUsage(Map<String, Object> usage) {
         this.usage = usage;
+    }
+
+    public void setPlan(SubscriptionPlanResponse plan) {
+        this.plan = plan;
     }
 }

@@ -1,6 +1,11 @@
 package app.SkillSync.service;
 
+import app.SkillSync.dto.AcceptCandidateInviteRequest;
+import app.SkillSync.dto.AcceptTeamInviteRequest;
+import app.SkillSync.dto.AuthResponse;
+import app.SkillSync.dto.CandidateInvitePreviewResponse;
 import app.SkillSync.dto.RegisterRequest;
+import app.SkillSync.dto.TeamInvitePreviewResponse;
 import app.SkillSync.model.AuthTokenType;
 import app.SkillSync.model.Candidate;
 import app.SkillSync.model.EmailToken;
@@ -34,6 +39,7 @@ class AuthServiceTest {
     private JwtService jwtService;
     private EmailTokenService emailTokenService;
     private MailService mailService;
+    private AuditLogService auditLogService;
     private AuthService authService;
 
     @BeforeEach
@@ -46,6 +52,7 @@ class AuthServiceTest {
         jwtService = mock(JwtService.class);
         emailTokenService = mock(EmailTokenService.class);
         mailService = mock(MailService.class);
+        auditLogService = mock(AuditLogService.class);
 
         authService = new AuthService(
                 userRepository,
@@ -55,7 +62,8 @@ class AuthServiceTest {
                 candidateRepository,
                 organizationRepository,
                 emailTokenService,
-                mailService
+                mailService,
+                auditLogService
         );
 
         ReflectionTestUtils.setField(
@@ -132,39 +140,57 @@ class AuthServiceTest {
     }
 
     @Test
-    void registerCandidateCreatesUnverifiedUserAndSendsVerificationEmail() {
+    void registerCandidateRejectsPublicCandidateSignup() {
         RegisterRequest request = new RegisterRequest();
         request.setFullName("Candidate Demo");
         request.setEmail("candidate@skillsync.com");
         request.setPassword("password123");
         request.setRole(Role.CANDIDATE);
 
-        User savedUser = new User();
-        savedUser.setId("candidate-user-123");
-        savedUser.setFullName("Candidate Demo");
-        savedUser.setEmail("candidate@skillsync.com");
-        savedUser.setRole(Role.CANDIDATE);
-        savedUser.setEmailVerified(false);
-
         when(userRepository.existsByEmail("candidate@skillsync.com")).thenReturn(false);
-        when(passwordEncoder.encode("password123")).thenReturn("encoded-password");
-        when(userRepository.save(any(User.class))).thenReturn(savedUser);
-        when(emailTokenService.createEmailVerificationToken(savedUser))
-                .thenReturn("verification-token");
 
-        authService.register(request);
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> authService.register(request)
+        );
 
-        verify(userRepository).save(any(User.class));
-        verify(emailTokenService).createEmailVerificationToken(savedUser);
-        verify(mailService).sendVerificationEmail(
-                eq("candidate@skillsync.com"),
-                eq("Candidate Demo"),
-                contains("/verify-email?token=verification-token")
+        assertEquals(
+                "Only organization admin employer accounts can be created through public signup.",
+                exception.getMessage()
         );
 
         verify(candidateRepository, never()).findAllByEmailIgnoreCase(anyString());
         verify(candidateRepository, never()).save(any(Candidate.class));
         verify(organizationRepository, never()).save(any());
+        verify(userRepository, never()).save(any(User.class));
+        verify(jwtService, never()).generateToken(any(User.class));
+    }
+
+    @Test
+    void registerRejectsPublicSuperAdminSignup() {
+        RegisterRequest request = new RegisterRequest();
+        request.setFullName("Platform Owner");
+        request.setEmail("owner@skillsync.com");
+        request.setPassword("Password123!");
+        request.setRole(Role.SUPER_ADMIN);
+        request.setOrganizationName("SkillSync");
+
+        when(userRepository.existsByEmail("owner@skillsync.com")).thenReturn(false);
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> authService.register(request)
+        );
+
+        assertEquals(
+                "Only organization admin employer accounts can be created through public signup.",
+                exception.getMessage()
+        );
+
+        verify(candidateRepository, never()).findAllByEmailIgnoreCase(anyString());
+        verify(candidateRepository, never()).save(any(Candidate.class));
+        verify(organizationRepository, never()).save(any());
+        verify(userRepository, never()).save(any(User.class));
         verify(jwtService, never()).generateToken(any(User.class));
     }
 
@@ -238,6 +264,193 @@ class AuthServiceTest {
         assertEquals("REGISTERED", invitedProfileTwo.getStatus());
 
         verify(candidateRepository, times(2)).save(any(Candidate.class));
+        verify(emailTokenService).markUsed(token);
+    }
+
+    @Test
+    void getCandidateInviteReturnsCandidateAndOrganizationPreview() {
+        EmailToken token = new EmailToken();
+        token.setCandidateId("candidate-profile-1");
+        token.setEmail("candidate@skillsync.com");
+
+        Candidate candidate = new Candidate();
+        candidate.setId("candidate-profile-1");
+        candidate.setName("Candidate Demo");
+        candidate.setEmail("candidate@skillsync.com");
+        candidate.setOrganizationId("org-1");
+        candidate.setStatus("INVITED");
+
+        Organization organization = new Organization();
+        organization.setId("org-1");
+        organization.setName("SkillSync Demo Org");
+
+        when(emailTokenService.validateToken(
+                eq("raw-invite-token"),
+                eq(AuthTokenType.CANDIDATE_INVITE)
+        )).thenReturn(token);
+        when(candidateRepository.findById("candidate-profile-1"))
+                .thenReturn(Optional.of(candidate));
+        when(organizationRepository.findById("org-1"))
+                .thenReturn(Optional.of(organization));
+
+        CandidateInvitePreviewResponse response =
+                authService.getCandidateInvite("raw-invite-token");
+
+        assertEquals("candidate-profile-1", response.getCandidateId());
+        assertEquals("Candidate Demo", response.getFullName());
+        assertEquals("candidate@skillsync.com", response.getEmail());
+        assertEquals("SkillSync Demo Org", response.getOrganizationName());
+    }
+
+    @Test
+    void acceptCandidateInviteCreatesVerifiedCandidateUserAndLinksProfile() {
+        AcceptCandidateInviteRequest request = new AcceptCandidateInviteRequest();
+        request.setToken("raw-invite-token");
+        request.setFullName("Candidate Demo");
+        request.setPassword("Password123!");
+
+        EmailToken token = new EmailToken();
+        token.setCandidateId("candidate-profile-1");
+        token.setEmail("candidate@skillsync.com");
+
+        Candidate candidate = new Candidate();
+        candidate.setId("candidate-profile-1");
+        candidate.setName("Candidate Demo");
+        candidate.setEmail("candidate@skillsync.com");
+        candidate.setOrganizationId("org-1");
+        candidate.setStatus("INVITED");
+
+        User savedUser = new User();
+        savedUser.setId("candidate-user-123");
+        savedUser.setFullName("Candidate Demo");
+        savedUser.setEmail("candidate@skillsync.com");
+        savedUser.setRole(Role.CANDIDATE);
+        savedUser.setEmailVerified(true);
+
+        when(emailTokenService.validateToken(
+                eq("raw-invite-token"),
+                eq(AuthTokenType.CANDIDATE_INVITE)
+        )).thenReturn(token);
+        when(candidateRepository.findById("candidate-profile-1"))
+                .thenReturn(Optional.of(candidate));
+        when(userRepository.existsByEmail("candidate@skillsync.com"))
+                .thenReturn(false);
+        when(passwordEncoder.encode("Password123!")).thenReturn("encoded-password");
+        when(userRepository.save(any(User.class))).thenReturn(savedUser);
+        when(jwtService.generateToken(savedUser)).thenReturn("jwt-token");
+
+        AuthResponse response = authService.acceptCandidateInvite(request);
+
+        assertEquals("jwt-token", response.getToken());
+        assertEquals("candidate-user-123", response.getUserId());
+        assertEquals(Role.CANDIDATE, response.getRole());
+        assertEquals("candidate-user-123", candidate.getUserId());
+        assertEquals("REGISTERED", candidate.getStatus());
+
+        verify(candidateRepository).save(candidate);
+        verify(emailTokenService).markUsed(token);
+    }
+
+    @Test
+    void acceptCandidateInviteRejectsAlreadyAcceptedCandidate() {
+        AcceptCandidateInviteRequest request = new AcceptCandidateInviteRequest();
+        request.setToken("raw-invite-token");
+        request.setFullName("Candidate Demo");
+        request.setPassword("Password123!");
+
+        EmailToken token = new EmailToken();
+        token.setCandidateId("candidate-profile-1");
+        token.setEmail("candidate@skillsync.com");
+
+        Candidate candidate = new Candidate();
+        candidate.setId("candidate-profile-1");
+        candidate.setEmail("candidate@skillsync.com");
+        candidate.setUserId("candidate-user-123");
+        candidate.setStatus("REGISTERED");
+
+        when(emailTokenService.validateToken(
+                eq("raw-invite-token"),
+                eq(AuthTokenType.CANDIDATE_INVITE)
+        )).thenReturn(token);
+        when(candidateRepository.findById("candidate-profile-1"))
+                .thenReturn(Optional.of(candidate));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> authService.acceptCandidateInvite(request)
+        );
+
+        assertEquals("This invite has already been accepted.", exception.getMessage());
+        verify(userRepository, never()).save(any(User.class));
+        verify(emailTokenService, never()).markUsed(any(EmailToken.class));
+    }
+
+    @Test
+    void getTeamInviteReturnsOrganizationPreview() {
+        EmailToken token = new EmailToken();
+        token.setOrganizationId("org-1");
+        token.setEmail("teammate@skillsync.com");
+
+        Organization organization = new Organization();
+        organization.setId("org-1");
+        organization.setName("SkillSync Demo Org");
+
+        when(emailTokenService.validateToken(
+                eq("raw-team-token"),
+                eq(AuthTokenType.TEAM_MEMBER_INVITE)
+        )).thenReturn(token);
+        when(organizationRepository.findById("org-1"))
+                .thenReturn(Optional.of(organization));
+
+        TeamInvitePreviewResponse response =
+                authService.getTeamInvite("raw-team-token", "Team Member");
+
+        assertEquals("Team Member", response.getFullName());
+        assertEquals("teammate@skillsync.com", response.getEmail());
+        assertEquals("SkillSync Demo Org", response.getOrganizationName());
+    }
+
+    @Test
+    void acceptTeamInviteCreatesVerifiedAdminInOrganization() {
+        AcceptTeamInviteRequest request = new AcceptTeamInviteRequest();
+        request.setToken("raw-team-token");
+        request.setFullName("Team Member");
+        request.setPassword("Password123!");
+
+        EmailToken token = new EmailToken();
+        token.setOrganizationId("org-1");
+        token.setEmail("teammate@skillsync.com");
+
+        Organization organization = new Organization();
+        organization.setId("org-1");
+        organization.setName("SkillSync Demo Org");
+
+        User savedUser = new User();
+        savedUser.setId("team-user-123");
+        savedUser.setFullName("Team Member");
+        savedUser.setEmail("teammate@skillsync.com");
+        savedUser.setRole(Role.ADMIN);
+        savedUser.setOrganizationId("org-1");
+        savedUser.setEmailVerified(true);
+
+        when(emailTokenService.validateToken(
+                eq("raw-team-token"),
+                eq(AuthTokenType.TEAM_MEMBER_INVITE)
+        )).thenReturn(token);
+        when(organizationRepository.findById("org-1"))
+                .thenReturn(Optional.of(organization));
+        when(userRepository.existsByEmail("teammate@skillsync.com"))
+                .thenReturn(false);
+        when(passwordEncoder.encode("Password123!")).thenReturn("encoded-password");
+        when(userRepository.save(any(User.class))).thenReturn(savedUser);
+        when(jwtService.generateToken(savedUser)).thenReturn("jwt-token");
+
+        AuthResponse response = authService.acceptTeamInvite(request);
+
+        assertEquals("jwt-token", response.getToken());
+        assertEquals("team-user-123", response.getUserId());
+        assertEquals(Role.ADMIN, response.getRole());
+
         verify(emailTokenService).markUsed(token);
     }
 }

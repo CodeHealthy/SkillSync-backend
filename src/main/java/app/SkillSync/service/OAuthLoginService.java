@@ -75,10 +75,10 @@ public class OAuthLoginService {
             changed = true;
         }
 
-        if (user.getRole() == Role.ADMIN) {
+        if (user.getRole() != null && user.getRole().isOrganizationStaff()) {
             if (!user.isEmailVerifiedForLogin() && !googleEmailVerified) {
                 throw new IllegalArgumentException(
-                        "Google could not confirm this admin email as verified."
+                        "Google could not confirm this organization account email as verified."
                 );
             }
 
@@ -112,6 +112,7 @@ public class OAuthLoginService {
         user.setCreatedAt(Instant.now());
         user.setEmailVerified(true);
         user.setEmailVerifiedAt(Instant.now());
+        user.setActive(true);
 
         return userRepository.save(user);
     }

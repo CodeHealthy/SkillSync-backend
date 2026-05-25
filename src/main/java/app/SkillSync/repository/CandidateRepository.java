@@ -10,6 +10,7 @@ import java.time.Instant;
 public interface CandidateRepository extends MongoRepository<Candidate, String> {
 
     List<Candidate> findByNameContainingIgnoreCase(String name);
+    List<Candidate> findByOrganizationIdAndNameContainingIgnoreCase(String organizationId, String name);
 
     boolean existsByEmail(String email);
     List<Candidate> findAllByUserId(String userId);

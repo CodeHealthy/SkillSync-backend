@@ -75,7 +75,7 @@ Output contract:
 General assessment rules:
 - Keep the prompt concise, specific, and candidate-facing.
 - maxScore should usually be 100.
-- sections must be the primary generated assessment content for Assessment Builder v2.
+- sections must be the primary generated assessment content for Assessment Builder.
 - Generate one complete assessment, not a single isolated question.
 - Use MCQs for automatically scored knowledge checks.
 - Use SHORT_ANSWER questions for personality, communication, judgment, tradeoff, and working-style signals. These are not automatically graded and should include reviewer guidance in correctAnswer.

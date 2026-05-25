@@ -26,6 +26,8 @@ public class User {
 
     private Boolean emailVerified;
     private Instant emailVerifiedAt;
+    private Boolean active;
+    private Instant deactivatedAt;
 
     public User() {
     }
@@ -74,8 +76,20 @@ public class User {
         return emailVerifiedAt;
     }
 
+    public Boolean getActive() {
+        return active;
+    }
+
+    public Instant getDeactivatedAt() {
+        return deactivatedAt;
+    }
+
     public boolean isEmailVerifiedForLogin() {
         return emailVerified == null || Boolean.TRUE.equals(emailVerified);
+    }
+
+    public boolean isActiveForLogin() {
+        return active == null || Boolean.TRUE.equals(active);
     }
 
     public void setId(String id) {
@@ -112,5 +126,13 @@ public class User {
 
     public void setEmailVerifiedAt(Instant emailVerifiedAt) {
         this.emailVerifiedAt = emailVerifiedAt;
+    }
+
+    public void setActive(Boolean active) {
+        this.active = active;
+    }
+
+    public void setDeactivatedAt(Instant deactivatedAt) {
+        this.deactivatedAt = deactivatedAt;
     }
 }
