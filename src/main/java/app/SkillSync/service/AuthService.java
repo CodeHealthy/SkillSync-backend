@@ -7,6 +7,7 @@ import app.SkillSync.dto.CandidateInvitePreviewResponse;
 import app.SkillSync.dto.TeamInvitePreviewResponse;
 import app.SkillSync.dto.ForgotPasswordRequest;
 import app.SkillSync.dto.LoginRequest;
+import app.SkillSync.dto.OAuthExchangeRequest;
 import app.SkillSync.dto.RegisterRequest;
 import app.SkillSync.dto.ResendVerificationRequest;
 import app.SkillSync.dto.ResetPasswordRequest;
@@ -19,7 +20,7 @@ import app.SkillSync.model.User;
 import app.SkillSync.repository.CandidateRepository;
 import app.SkillSync.repository.OrganizationRepository;
 import app.SkillSync.repository.UserRepository;
-import app.SkillSync.security.JwtService;
+import app.SkillSync.security.AuthCookieService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationServiceException;
@@ -42,7 +43,7 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
-    private final JwtService jwtService;
+    private final AuthCookieService authCookieService;
     private final OrganizationRepository organizationRepository;
     private final EmailTokenService emailTokenService;
     private final MailService mailService;
@@ -55,7 +56,7 @@ public class AuthService {
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             AuthenticationManager authenticationManager,
-            JwtService jwtService,
+            AuthCookieService authCookieService,
             CandidateRepository candidateRepository,
             OrganizationRepository organizationRepository,
             EmailTokenService emailTokenService,
@@ -65,7 +66,7 @@ public class AuthService {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
-        this.jwtService = jwtService;
+        this.authCookieService = authCookieService;
         this.candidateRepository = candidateRepository;
         this.organizationRepository = organizationRepository;
         this.emailTokenService = emailTokenService;
@@ -238,6 +239,36 @@ public class AuthService {
 
         userRepository.save(user);
         emailTokenService.markUsed(token);
+    }
+
+    public AuthResponse exchangeOAuthCode(OAuthExchangeRequest request) {
+        EmailToken token = emailTokenService.validateToken(
+                request.getCode(),
+                AuthTokenType.OAUTH_EXCHANGE
+        );
+
+        User user = userRepository.findById(token.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("Invalid or expired OAuth code."));
+
+        if (!user.isEmailVerifiedForLogin()) {
+            throw new IllegalArgumentException("Please verify your email before logging in.");
+        }
+
+        if (!user.isActiveForLogin()) {
+            throw new IllegalArgumentException("This account has been deactivated.");
+        }
+
+        emailTokenService.markUsed(token);
+
+        auditLogService.record(
+                user,
+                "OAUTH_EXCHANGE_COMPLETED",
+                "USER",
+                user.getId(),
+                Map.of("role", user.getRole())
+        );
+
+        return buildAuthResponse(user);
     }
 
     public CandidateInvitePreviewResponse getCandidateInvite(String rawToken) {
@@ -443,7 +474,7 @@ public class AuthService {
     }
 
     private AuthResponse buildAuthResponse(User user) {
-        String token = jwtService.generateToken(user);
+        String token = authCookieService.createToken(user);
 
         return new AuthResponse(
                 token,

@@ -20,6 +20,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 
 import java.util.List;
 import java.util.Map;
@@ -39,6 +43,7 @@ class AssessmentServiceTest {
     private OrganizationRepository organizationRepository;
     private BillingService billingService;
     private AuditLogService auditLogService;
+    private MongoTemplate mongoTemplate;
     private AssessmentService assessmentService;
 
     @BeforeEach
@@ -51,6 +56,7 @@ class AssessmentServiceTest {
         organizationRepository = mock(OrganizationRepository.class);
         billingService = mock(BillingService.class);
         auditLogService = mock(AuditLogService.class);
+        mongoTemplate = mock(MongoTemplate.class);
 
         assessmentService = new AssessmentService(
                 assessmentRepository,
@@ -60,7 +66,8 @@ class AssessmentServiceTest {
                 userRepository,
                 organizationRepository,
                 billingService,
-                auditLogService
+                auditLogService,
+                mongoTemplate
         );
     }
 
@@ -121,6 +128,9 @@ class AssessmentServiceTest {
     void assignAssessment_whenValid_createsOrganizationScopedAssignment() {
         User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
         Assessment assessment = assessment("assessment-1", "org-1");
+        Instant publishedAt = Instant.now().minusSeconds(300);
+        assessment.setVersion(3);
+        assessment.setPublishedAt(publishedAt);
         Candidate candidate = candidate("candidate-1", "org-1");
 
         Organization organization = new Organization();
@@ -152,6 +162,8 @@ class AssessmentServiceTest {
         assertEquals(AssignmentStatus.ASSIGNED, savedAssignment.getStatus());
         assertEquals("NOT_RUN", savedAssignment.getExecutionStatus());
         assertEquals(AssessmentType.CODING_CHALLENGE, savedAssignment.getAssessmentType());
+        assertEquals(3, savedAssignment.getAssessmentVersion());
+        assertEquals(publishedAt, savedAssignment.getAssessmentPublishedAt());
         assertEquals(ProgrammingLanguage.JAVA, savedAssignment.getLanguage());
         assertEquals(100, savedAssignment.getMaxScore());
         assertEquals(dueAt, savedAssignment.getDueAt());
@@ -290,7 +302,7 @@ class AssessmentServiceTest {
         request.setStatus(AssessmentStatus.PUBLISHED);
         request.setType(AssessmentType.CODING_CHALLENGE);
         request.setLanguage(ProgrammingLanguage.JAVA);
-        request.setMaxScore(100);
+        request.setMaxScore(50);
         request.setPrompt("Find the second largest unique element.");
         request.setStarterCode("public class Main {}");
         request.setExpectedOutput("20");
@@ -311,6 +323,8 @@ class AssessmentServiceTest {
         Assessment savedAssessment = assessmentService.createAssessment(request);
 
         assertEquals(AssessmentType.CODING_CHALLENGE, savedAssessment.getType());
+        assertEquals(1, savedAssessment.getVersion());
+        assertNotNull(savedAssessment.getPublishedAt());
         assertEquals(100, savedAssessment.getMaxScore());
         assertEquals(50, savedAssessment.getTestCases().stream()
                 .mapToInt(testCase -> testCase.getPoints() == null ? 0 : testCase.getPoints())
@@ -318,6 +332,46 @@ class AssessmentServiceTest {
         assertEquals(50, savedAssessment.getSections().get(1).getQuestions().get(0).getPoints());
 
         verify(assessmentRepository).save(any(Assessment.class));
+    }
+
+    @Test
+    void updateAssessment_whenAdminOwnsAssessment_incrementsVersionAndKeepsOrganization() {
+        User admin = adminUser("admin-1", "admin@skillsync.com", "org-1");
+        Assessment assessment = assessment("assessment-1", "org-1");
+        assessment.setVersion(2);
+        assessment.setStatus(AssessmentStatus.DRAFT);
+
+        setAuthenticatedUser(admin.getEmail());
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(assessmentRepository.findById("assessment-1")).thenReturn(Optional.of(assessment));
+        when(assessmentRepository.save(any(Assessment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        CreateAssessmentRequest request = new CreateAssessmentRequest();
+        request.setTitle("Updated Java Assessment");
+        request.setDescription("Updated description");
+        request.setRoleTitle("Backend Engineer");
+        request.setStatus(AssessmentStatus.PUBLISHED);
+        request.setType(AssessmentType.CODING_CHALLENGE);
+        request.setLanguage(ProgrammingLanguage.JAVA);
+        request.setMaxScore(100);
+        request.setPrompt("Print Updated SkillSync");
+        request.setStarterCode("public class Main {}");
+        request.setExpectedOutput("Updated SkillSync");
+        request.setSections(List.of(section(
+                "section-1",
+                "Coding",
+                codingQuestion("coding-1", 50)
+        )));
+
+        Assessment savedAssessment = assessmentService.updateAssessment("assessment-1", request);
+
+        assertEquals("Updated Java Assessment", savedAssessment.getTitle());
+        assertEquals("org-1", savedAssessment.getOrganizationId());
+        assertEquals(3, savedAssessment.getVersion());
+        assertEquals(AssessmentStatus.PUBLISHED, savedAssessment.getStatus());
+        assertNotNull(savedAssessment.getPublishedAt());
     }
 
     @Test
@@ -513,7 +567,7 @@ class AssessmentServiceTest {
     }
 
     @Test
-    void submitAssignment_whenAlreadySubmittedAndExpired_reportsAlreadySubmitted() {
+    void submitAssignment_whenAlreadySubmittedAndExpired_returnsExistingSubmittedAssignment() {
         User candidateUser = candidateUser("user-1", "candidate@example.com");
 
         Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
@@ -533,13 +587,10 @@ class AssessmentServiceTest {
         when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
         when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
 
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> assessmentService.submitAssignment("assignment-1", request)
-        );
+        AssessmentAssignment result = assessmentService.submitAssignment("assignment-1", request);
 
-        assertEquals("Assignment has already been submitted", exception.getMessage());
-
+        assertEquals("assignment-1", result.getId());
+        assertEquals(AssignmentStatus.SUBMITTED, result.getStatus());
         verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
     }
 
@@ -597,6 +648,13 @@ class AssessmentServiceTest {
         assertEquals("PENDING_EXECUTION", savedAssignment.getExecutionStatus());
         assertNotNull(savedAssignment.getSubmittedAt());
         assertFalse(Boolean.TRUE.equals(savedAssignment.getAutoSubmitted()));
+        verify(mongoTemplate).findAndModify(
+                any(Query.class),
+                any(Update.class),
+                any(FindAndModifyOptions.class),
+                eq(AssessmentAssignment.class)
+        );
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
     }
 
     @Test
@@ -626,6 +684,33 @@ class AssessmentServiceTest {
         assertEquals(Map.of("short-1", "Draft explanation"), savedAssignment.getDraftAnswers());
         assertNotNull(savedAssignment.getDraftSavedAt());
         assertEquals(AssignmentStatus.ASSIGNED, savedAssignment.getStatus());
+    }
+
+    @Test
+    void saveAssignmentDraft_whenAnswerIsTooLarge_throwsIllegalArgumentException() {
+        User candidateUser = candidateUser("user-1", "candidate@example.com");
+
+        Candidate ownedCandidateProfile = candidate("candidate-profile-1", "org-1");
+        AssessmentAssignment assignment = assignment("assignment-1", "candidate-profile-1", "org-1");
+        assignment.setAssessmentType(AssessmentType.CODING_CHALLENGE);
+        assignment.setStatus(AssignmentStatus.ASSIGNED);
+
+        SaveAssignmentDraftRequest request = new SaveAssignmentDraftRequest();
+        request.setDraftAnswers(Map.of("short-1", "x".repeat(10_001)));
+
+        setAuthenticatedUser(candidateUser.getEmail());
+
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+        when(assignmentRepository.findById("assignment-1")).thenReturn(Optional.of(assignment));
+        when(candidateRepository.findAllByUserId("user-1")).thenReturn(List.of(ownedCandidateProfile));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> assessmentService.saveAssignmentDraft("assignment-1", request)
+        );
+
+        assertEquals("Draft answer is too large.", exception.getMessage());
+        verify(assignmentRepository, never()).save(any(AssessmentAssignment.class));
     }
 
     @Test

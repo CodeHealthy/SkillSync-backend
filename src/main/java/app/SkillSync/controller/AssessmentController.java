@@ -12,6 +12,8 @@ import app.SkillSync.dto.SubmitAssignmentRequest;
 import app.SkillSync.model.Assessment;
 import app.SkillSync.model.AssessmentAssignment;
 import app.SkillSync.service.AssessmentService;
+import app.SkillSync.service.AuthRateLimitService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,9 +27,14 @@ import java.util.List;
 public class AssessmentController {
 
     private final AssessmentService assessmentService;
+    private final AuthRateLimitService authRateLimitService;
 
-    public AssessmentController(AssessmentService assessmentService) {
+    public AssessmentController(
+            AssessmentService assessmentService,
+            AuthRateLimitService authRateLimitService
+    ) {
         this.assessmentService = assessmentService;
+        this.authRateLimitService = authRateLimitService;
     }
 
     @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER')")
@@ -37,6 +44,16 @@ public class AssessmentController {
     ) {
         Assessment assessment = assessmentService.createAssessment(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(assessment);
+    }
+
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER')")
+    @PutMapping("/{assessmentId}")
+    public ResponseEntity<Assessment> updateAssessment(
+            @PathVariable String assessmentId,
+            @Valid @RequestBody CreateAssessmentRequest request
+    ) {
+        Assessment assessment = assessmentService.updateAssessment(assessmentId, request);
+        return ResponseEntity.ok(assessment);
     }
 
     @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR')")
@@ -135,8 +152,13 @@ public class AssessmentController {
     @PostMapping("/assignments/{assignmentId}/submit")
     public ResponseEntity<AssessmentAssignment> submitAssignment(
             @PathVariable String assignmentId,
-            @Valid @RequestBody SubmitAssignmentRequest request
+            @Valid @RequestBody SubmitAssignmentRequest request,
+            HttpServletRequest httpRequest
     ) {
+        authRateLimitService.checkAssessmentSubmitAllowed(
+                buildRateLimitKey(httpRequest, assignmentId)
+        );
+
         AssessmentAssignment assignment = assessmentService.submitAssignment(
                 assignmentId,
                 request
@@ -180,5 +202,22 @@ public class AssessmentController {
         );
 
         return ResponseEntity.ok(result);
+    }
+
+    private String buildRateLimitKey(HttpServletRequest request, String subject) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        String clientIp = request.getRemoteAddr();
+
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            clientIp = forwardedFor.split(",")[0].trim();
+        } else {
+            String realIp = request.getHeader("X-Real-IP");
+
+            if (realIp != null && !realIp.isBlank()) {
+                clientIp = realIp.trim();
+            }
+        }
+
+        return clientIp + ":" + subject;
     }
 }

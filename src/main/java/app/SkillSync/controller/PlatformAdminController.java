@@ -2,15 +2,22 @@ package app.SkillSync.controller;
 
 import app.SkillSync.dto.AuditLogResponse;
 import app.SkillSync.dto.PlatformAdminSummaryResponse;
+import app.SkillSync.dto.PlatformSubscriptionPlanRequest;
+import app.SkillSync.dto.SubscriptionPlanResponse;
 import app.SkillSync.service.AuditLogService;
 import app.SkillSync.service.PlatformAdminService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
 
@@ -46,5 +53,41 @@ public class PlatformAdminController {
         return ResponseEntity.ok(
                 auditLogService.listPlatformLogs(authentication, action)
         );
+    }
+
+    @GetMapping("/subscription-plans")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<List<SubscriptionPlanResponse>> listSubscriptionPlans(
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(platformAdminService.listSubscriptionPlans(authentication));
+    }
+
+    @PostMapping("/subscription-plans")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<SubscriptionPlanResponse> createSubscriptionPlan(
+            Authentication authentication,
+            @Valid @RequestBody PlatformSubscriptionPlanRequest request
+    ) {
+        return ResponseEntity.ok(platformAdminService.createSubscriptionPlan(authentication, request));
+    }
+
+    @PatchMapping("/subscription-plans/{planId}")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<SubscriptionPlanResponse> updateSubscriptionPlan(
+            Authentication authentication,
+            @PathVariable String planId,
+            @Valid @RequestBody PlatformSubscriptionPlanRequest request
+    ) {
+        return ResponseEntity.ok(platformAdminService.updateSubscriptionPlan(authentication, planId, request));
+    }
+
+    @PostMapping("/subscription-plans/{planId}/deactivate")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<SubscriptionPlanResponse> deactivateSubscriptionPlan(
+            Authentication authentication,
+            @PathVariable String planId
+    ) {
+        return ResponseEntity.ok(platformAdminService.deactivateSubscriptionPlan(authentication, planId));
     }
 }

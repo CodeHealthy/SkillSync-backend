@@ -20,17 +20,20 @@ public class OAuthLoginService {
     private final CandidateRepository candidateRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final EmailTokenService emailTokenService;
 
     public OAuthLoginService(
             UserRepository userRepository,
             CandidateRepository candidateRepository,
             PasswordEncoder passwordEncoder,
-            JwtService jwtService
+            JwtService jwtService,
+            EmailTokenService emailTokenService
     ) {
         this.userRepository = userRepository;
         this.candidateRepository = candidateRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.emailTokenService = emailTokenService;
     }
 
     public User processGoogleLogin(OAuth2User oauthUser) {
@@ -53,6 +56,10 @@ public class OAuthLoginService {
 
     public String generateToken(User user) {
         return jwtService.generateToken(user);
+    }
+
+    public String createExchangeCode(User user) {
+        return emailTokenService.createOAuthExchangeToken(user);
     }
 
     private User processExistingUser(

@@ -1,9 +1,8 @@
 package app.SkillSync.dto;
 
-import app.SkillSync.model.SubscriptionFeatures;
-
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 public class SubscriptionPlanResponse {
 
@@ -14,7 +13,7 @@ public class SubscriptionPlanResponse {
     private BigDecimal pricing;
     private String currency;
     private String billingCycle;
-    private SubscriptionFeatures features;
+    private Map<String, Object> features;
     private List<String> highlights;
     private Boolean recommended;
     private Boolean active;
@@ -49,7 +48,7 @@ public class SubscriptionPlanResponse {
         return billingCycle;
     }
 
-    public SubscriptionFeatures getFeatures() {
+    public Map<String, Object> getFeatures() {
         return features;
     }
 
@@ -101,7 +100,7 @@ public class SubscriptionPlanResponse {
         this.billingCycle = billingCycle;
     }
 
-    public void setFeatures(SubscriptionFeatures features) {
+    public void setFeatures(Map<String, Object> features) {
         this.features = features;
     }
 

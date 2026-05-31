@@ -38,6 +38,9 @@ public class EmailTokenService {
     @Value("${app.auth.team-member-invite-expiration-minutes:10080}")
     private long teamMemberInviteExpirationMinutes;
 
+    @Value("${app.auth.oauth-exchange-expiration-minutes:5}")
+    private long oauthExchangeExpirationMinutes;
+
     public EmailTokenService(EmailTokenRepository emailTokenRepository) {
         this.emailTokenRepository = emailTokenRepository;
     }
@@ -79,6 +82,10 @@ public class EmailTokenService {
                 AuthTokenType.TEAM_MEMBER_INVITE,
                 teamMemberInviteExpirationMinutes
         );
+    }
+
+    public String createOAuthExchangeToken(User user) {
+        return createToken(user, AuthTokenType.OAUTH_EXCHANGE, oauthExchangeExpirationMinutes);
     }
 
     public EmailToken validateToken(String rawToken, AuthTokenType type) {

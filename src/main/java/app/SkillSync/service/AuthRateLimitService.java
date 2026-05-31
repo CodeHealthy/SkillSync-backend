@@ -12,6 +12,9 @@ public class AuthRateLimitService {
 
     private static final int MAX_LOGIN_ATTEMPTS = 8;
     private static final int MAX_REGISTER_ATTEMPTS = 5;
+    private static final int MAX_PASSWORD_FLOW_ATTEMPTS = 5;
+    private static final int MAX_TOKEN_FLOW_ATTEMPTS = 10;
+    private static final int MAX_ASSESSMENT_SUBMIT_ATTEMPTS = 12;
     private static final Duration WINDOW = Duration.ofMinutes(15);
 
     private final Map<String, AttemptBucket> attempts = new ConcurrentHashMap<>();
@@ -22,6 +25,18 @@ public class AuthRateLimitService {
 
     public void checkRegisterAllowed(String key) {
         checkAllowed("register:" + key, MAX_REGISTER_ATTEMPTS);
+    }
+
+    public void checkPasswordFlowAllowed(String key) {
+        checkAllowed("password:" + key, MAX_PASSWORD_FLOW_ATTEMPTS);
+    }
+
+    public void checkTokenFlowAllowed(String key) {
+        checkAllowed("token:" + key, MAX_TOKEN_FLOW_ATTEMPTS);
+    }
+
+    public void checkAssessmentSubmitAllowed(String key) {
+        checkAllowed("assessment-submit:" + key, MAX_ASSESSMENT_SUBMIT_ATTEMPTS);
     }
 
     public void resetLoginAttempts(String key) {

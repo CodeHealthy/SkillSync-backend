@@ -1,6 +1,7 @@
 package app.SkillSync.model;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
@@ -13,10 +14,13 @@ public class AssessmentAssignment {
     @Id
     private String id;
 
+    @Indexed
     private String assessmentId;
     private String assessmentTitle;
     private AssessmentType assessmentType;
     private AssessmentStatus assessmentStatus;
+    private Integer assessmentVersion;
+    private Instant assessmentPublishedAt;
     private ProgrammingLanguage language;
 
     private String prompt;
@@ -35,10 +39,13 @@ public class AssessmentAssignment {
     private List<AssessmentSectionAttempt> sectionAttempts = new ArrayList<>();
     private List<AssessmentIntegrityEvent> integrityEvents = new ArrayList<>();
 
+    @Indexed
     private String candidateId;
     private String candidateName;
+    @Indexed
     private String candidateEmail;
 
+    @Indexed
     private AssignmentStatus status;
 
     private String submittedAnswer;
@@ -64,6 +71,7 @@ public class AssessmentAssignment {
     private String feedback;
 
     private Instant assignedAt;
+    @Indexed
     private Instant dueAt;
     private Integer timeLimitMinutes;
     private Instant startedAt;
@@ -72,6 +80,7 @@ public class AssessmentAssignment {
     private Instant completedAt;
     private Instant gradedAt;
     private Integer maxScore;
+    @Indexed
     private String organizationId;
     private String organizationName;
 
@@ -96,6 +105,14 @@ public class AssessmentAssignment {
 
     public AssessmentStatus getAssessmentStatus() {
         return assessmentStatus;
+    }
+
+    public Integer getAssessmentVersion() {
+        return assessmentVersion;
+    }
+
+    public Instant getAssessmentPublishedAt() {
+        return assessmentPublishedAt;
     }
 
     public ProgrammingLanguage getLanguage() {
@@ -292,6 +309,14 @@ public class AssessmentAssignment {
 
     public void setAssessmentStatus(AssessmentStatus assessmentStatus) {
         this.assessmentStatus = assessmentStatus;
+    }
+
+    public void setAssessmentVersion(Integer assessmentVersion) {
+        this.assessmentVersion = assessmentVersion == null || assessmentVersion < 1 ? 1 : assessmentVersion;
+    }
+
+    public void setAssessmentPublishedAt(Instant assessmentPublishedAt) {
+        this.assessmentPublishedAt = assessmentPublishedAt;
     }
 
     public void setLanguage(ProgrammingLanguage language) {

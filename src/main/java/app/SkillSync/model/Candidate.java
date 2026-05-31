@@ -22,8 +22,11 @@ public class Candidate {
     private List<TestResult> testResults = new ArrayList<>();
 
     private Instant createdAt;
+    @Indexed
     private String organizationId;
+    @Indexed
     private String userId;
+    @Indexed
     private String status; // INVITED / REGISTERED
     private String createdByAdminId;
 

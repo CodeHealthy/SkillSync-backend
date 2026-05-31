@@ -1,6 +1,7 @@
 package app.SkillSync.service;
 
 import app.SkillSync.dto.CreateCandidateRequest;
+import app.SkillSync.dto.SubmitTestResultRequest;
 import app.SkillSync.model.Candidate;
 import app.SkillSync.model.Role;
 import app.SkillSync.model.User;
@@ -273,6 +274,31 @@ class CandidateServiceTest {
         Candidate result = candidateService.getCandidateById("candidate-1");
 
         assertEquals("candidate-1", result.getId());
+    }
+
+    @Test
+    void submitTestResult_whenCandidateOwnsProfile_throwsRuntimeException() {
+        User candidateUser = candidateUser("user-candidate-1", "candidate@example.com");
+
+        setAuthenticatedUser(candidateUser.getEmail());
+        when(userRepository.findByEmail(candidateUser.getEmail())).thenReturn(Optional.of(candidateUser));
+
+        SubmitTestResultRequest request = new SubmitTestResultRequest();
+        request.setTestName("Legacy Score");
+        request.setScore(100);
+        request.setStatus("PASSED");
+
+        RuntimeException exception = assertThrows(
+                RuntimeException.class,
+                () -> candidateService.submitTestResult("candidate-1", request)
+        );
+
+        assertEquals(
+                "Only organization staff can record legacy test results.",
+                exception.getMessage()
+        );
+
+        verify(candidateRepository, never()).save(any(Candidate.class));
     }
 
     @Test

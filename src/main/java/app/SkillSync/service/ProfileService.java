@@ -5,7 +5,7 @@ import app.SkillSync.dto.ChangePasswordRequest;
 import app.SkillSync.dto.UpdateProfileRequest;
 import app.SkillSync.model.User;
 import app.SkillSync.repository.UserRepository;
-import app.SkillSync.security.JwtService;
+import app.SkillSync.security.AuthCookieService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -15,16 +15,16 @@ public class ProfileService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtService jwtService;
+    private final AuthCookieService authCookieService;
 
     public ProfileService(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
-            JwtService jwtService
+            AuthCookieService authCookieService
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
-        this.jwtService = jwtService;
+        this.authCookieService = authCookieService;
     }
 
     public AuthResponse getCurrentProfile(Authentication authentication) {
@@ -73,7 +73,7 @@ public class ProfileService {
     }
 
     private AuthResponse buildAuthResponse(User user) {
-        String token = jwtService.generateToken(user);
+        String token = authCookieService.createToken(user);
 
         return new AuthResponse(
                 token,

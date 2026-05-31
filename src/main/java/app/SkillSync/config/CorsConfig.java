@@ -48,9 +48,10 @@ public class CorsConfig {
                 "Authorization",
                 "Content-Type",
                 "Accept",
-                "Origin"
+                "Origin",
+                "X-XSRF-TOKEN"
         ));
-        configuration.setExposedHeaders(List.of("Authorization"));
+        configuration.setExposedHeaders(List.of());
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
 

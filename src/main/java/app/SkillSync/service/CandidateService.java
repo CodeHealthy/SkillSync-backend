@@ -88,6 +88,12 @@ public class CandidateService {
     }
 
     public TestResult submitTestResult(String candidateId, SubmitTestResultRequest request) {
+        User user = getCurrentUser();
+
+        if (user.getRole() == null || !user.getRole().isOrganizationStaff()) {
+            throw new RuntimeException("Only organization staff can record legacy test results.");
+        }
+
         Candidate candidate = getCandidateById(candidateId);
 
         if (candidate.getTestResults() == null) {

@@ -1,6 +1,7 @@
 package app.SkillSync.dto;
 
 import app.SkillSync.model.Role;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 public class AuthResponse {
 
@@ -21,6 +22,7 @@ public class AuthResponse {
         this.role = role;
     }
 
+    @JsonIgnore
     public String getToken() {
         return token;
     }

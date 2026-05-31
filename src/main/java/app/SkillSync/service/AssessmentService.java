@@ -36,6 +36,11 @@ import app.SkillSync.repository.OrganizationRepository;
 import app.SkillSync.repository.UserRepository;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -54,6 +59,10 @@ public class AssessmentService {
     private static final String REVIEW_NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW";
     private static final String REVIEW_REVIEWED = "REVIEWED";
     private static final int MAX_INTEGRITY_EVENTS_PER_ASSIGNMENT = 500;
+    private static final int MAX_DRAFT_CODE_LENGTH = 100_000;
+    private static final int MAX_DRAFT_ANSWERS = 200;
+    private static final int MAX_DRAFT_QUESTION_ID_LENGTH = 120;
+    private static final int MAX_DRAFT_ANSWER_LENGTH = 10_000;
 
     private final AssessmentRepository assessmentRepository;
     private final AssessmentAssignmentRepository assignmentRepository;
@@ -63,6 +72,7 @@ public class AssessmentService {
     private final OrganizationRepository organizationRepository;
     private final BillingService billingService;
     private final AuditLogService auditLogService;
+    private final MongoTemplate mongoTemplate;
 
     public AssessmentService(
             AssessmentRepository assessmentRepository,
@@ -72,7 +82,8 @@ public class AssessmentService {
             UserRepository userRepository,
             OrganizationRepository organizationRepository,
             BillingService billingService,
-            AuditLogService auditLogService
+            AuditLogService auditLogService,
+            MongoTemplate mongoTemplate
     ) {
         this.assessmentRepository = assessmentRepository;
         this.assignmentRepository = assignmentRepository;
@@ -82,6 +93,7 @@ public class AssessmentService {
         this.organizationRepository = organizationRepository;
         this.billingService = billingService;
         this.auditLogService = auditLogService;
+        this.mongoTemplate = mongoTemplate;
     }
 
     public Assessment createAssessment(CreateAssessmentRequest request) {
@@ -126,6 +138,10 @@ public class AssessmentService {
         assessment.setTestCases(normalizedTestCases);
         assessment.setSections(normalizedSections);
         assessment.setCreatedAt(Instant.now());
+        assessment.setVersion(1);
+        if (assessment.getStatus() == AssessmentStatus.PUBLISHED) {
+            assessment.setPublishedAt(assessment.getCreatedAt());
+        }
         assessment.setOrganizationId(adminUser.getOrganizationId());
 
         Assessment savedAssessment = assessmentRepository.save(assessment);
@@ -136,6 +152,75 @@ public class AssessmentService {
                 savedAssessment.getId(),
                 Map.of("title", savedAssessment.getTitle(), "status", savedAssessment.getStatus())
         );
+        return savedAssessment;
+    }
+
+    public Assessment updateAssessment(String assessmentId, CreateAssessmentRequest request) {
+        User adminUser = getCurrentUser();
+        requireAssessmentAuthor(adminUser);
+
+        if (adminUser.getOrganizationId() == null || adminUser.getOrganizationId().isBlank()) {
+            throw new RuntimeException("Admin is not linked to an organization.");
+        }
+
+        Assessment assessment = assessmentRepository.findById(assessmentId)
+                .orElseThrow(() -> new IllegalArgumentException("Assessment not found"));
+
+        if (!adminUser.getOrganizationId().equals(assessment.getOrganizationId())) {
+            throw new RuntimeException("Assessment does not belong to your organization.");
+        }
+
+        AssessmentStatus previousStatus = assessment.getStatus();
+        ProgrammingLanguage resolvedLanguage = resolveLanguage(request);
+        List<AssessmentSection> normalizedSections = normalizeAndValidateSections(request);
+        AssessmentQuestion primaryQuestion = findPrimaryQuestion(normalizedSections);
+        int executableMaxScore = primaryQuestion != null && primaryQuestion.getType() == QuestionType.CODING_CHALLENGE
+                ? safeInt(primaryQuestion.getPoints())
+                : request.getMaxScore();
+        List<AssessmentTestCase> normalizedTestCases = normalizeAndValidateTestCases(
+                resolveAssessmentType(request, primaryQuestion),
+                executableMaxScore,
+                primaryQuestion != null ? primaryQuestion.getExpectedOutput() : request.getExpectedOutput(),
+                primaryQuestion != null && primaryQuestion.getTestCases() != null && !primaryQuestion.getTestCases().isEmpty()
+                        ? primaryQuestion.getTestCases()
+                        : request.getTestCases()
+        );
+
+        assessment.setTitle(request.getTitle().trim());
+        assessment.setDescription(request.getDescription());
+        assessment.setRoleTitle(request.getRoleTitle());
+        assessment.setStatus(request.getStatus() == null ? AssessmentStatus.PUBLISHED : request.getStatus());
+        assessment.setType(resolveAssessmentType(request, primaryQuestion));
+        assessment.setLanguage(primaryQuestion != null && primaryQuestion.getLanguage() != null
+                ? primaryQuestion.getLanguage()
+                : resolvedLanguage);
+        assessment.setMaxScore(resolveMaxScore(request, normalizedSections));
+        assessment.setDurationMinutes(request.getDurationMinutes());
+        assessment.setPrompt(primaryQuestion != null ? primaryQuestion.getPrompt() : request.getPrompt().trim());
+        assessment.setStarterCode(primaryQuestion != null ? primaryQuestion.getStarterCode() : request.getStarterCode());
+        assessment.setExpectedOutput(primaryQuestion != null ? primaryQuestion.getExpectedOutput() : request.getExpectedOutput());
+        assessment.setTestCases(normalizedTestCases);
+        assessment.setSections(normalizedSections);
+        assessment.setVersion(safeInt(assessment.getVersion()) + 1);
+
+        if (assessment.getStatus() == AssessmentStatus.PUBLISHED &&
+                previousStatus != AssessmentStatus.PUBLISHED) {
+            assessment.setPublishedAt(Instant.now());
+        }
+
+        Assessment savedAssessment = assessmentRepository.save(assessment);
+        auditLogService.record(
+                adminUser,
+                "ASSESSMENT_UPDATED",
+                "ASSESSMENT",
+                savedAssessment.getId(),
+                Map.of(
+                        "title", savedAssessment.getTitle(),
+                        "status", savedAssessment.getStatus(),
+                        "version", savedAssessment.getVersion()
+                )
+        );
+
         return savedAssessment;
     }
 
@@ -200,6 +285,8 @@ public class AssessmentService {
         assignment.setAssessmentTitle(assessment.getTitle());
         assignment.setAssessmentType(assessment.getType());
         assignment.setAssessmentStatus(assessment.getStatus());
+        assignment.setAssessmentVersion(assessment.getVersion());
+        assignment.setAssessmentPublishedAt(assessment.getPublishedAt());
         assignment.setLanguage(assessment.getLanguage());
         assignment.setPrompt(assessment.getPrompt());
         assignment.setStarterCode(assessment.getStarterCode());
@@ -377,8 +464,9 @@ public class AssessmentService {
         }
 
         validateAssignmentCanBeWorkedOn(assignment);
+        validateDraftPayload(request);
 
-        assignment.setDraftCode(request.getDraftCode());
+        assignment.setDraftCode(normalizeDraftCode(request.getDraftCode()));
         assignment.setDraftAnswers(normalizeDraftAnswers(request.getDraftAnswers()));
         assignment.setDraftSavedAt(Instant.now());
 
@@ -436,6 +524,12 @@ public class AssessmentService {
 
         validateCandidateCanAccessAssignment(assignment);
         boolean autoSubmitted = Boolean.TRUE.equals(request.getAutoSubmitted());
+
+        if (assignment.getStatus() == AssignmentStatus.SUBMITTED ||
+                assignment.getStatus() == AssignmentStatus.GRADED) {
+            return toCandidateSafeAssignment(assignment);
+        }
+
         validateAssignmentIsSubmittable(assignment);
         validateAssignmentCanBeWorkedOn(assignment, autoSubmitted);
         validateSubmittedSections(assignment, autoSubmitted);
@@ -480,7 +574,7 @@ public class AssessmentService {
         markOpenSectionAttemptsCompleted(assignment, submittedAt);
         clearDraft(assignment);
 
-        AssessmentAssignment savedAssignment = assignmentRepository.save(assignment);
+        AssessmentAssignment savedAssignment = submitAssignmentAtomically(assignment);
         auditLogService.recordForOrganization(
                 getCurrentUser(),
                 savedAssignment.getOrganizationId(),
@@ -493,6 +587,60 @@ public class AssessmentService {
                 )
         );
         return toCandidateSafeAssignment(savedAssignment);
+    }
+
+    private AssessmentAssignment submitAssignmentAtomically(AssessmentAssignment assignment) {
+        Query query = Query.query(
+                Criteria.where("_id").is(assignment.getId())
+                        .and("status").is(AssignmentStatus.ASSIGNED)
+        );
+        Update update = new Update()
+                .set("submittedAnswer", assignment.getSubmittedAnswer())
+                .set("submittedCode", assignment.getSubmittedCode())
+                .set("submittedAnswers", assignment.getSubmittedAnswers())
+                .set("autoSubmitted", assignment.getAutoSubmitted())
+                .set("executionStatus", assignment.getExecutionStatus())
+                .set("actualOutput", assignment.getActualOutput())
+                .set("executionError", assignment.getExecutionError())
+                .set("testCaseResults", assignment.getTestCaseResults())
+                .set("score", assignment.getScore())
+                .set("autoScore", assignment.getAutoScore())
+                .set("codingScore", assignment.getCodingScore())
+                .set("multipleChoiceScore", assignment.getMultipleChoiceScore())
+                .set("manualReviewScore", assignment.getManualReviewScore())
+                .set("reviewedQuestionCount", assignment.getReviewedQuestionCount())
+                .set("totalQuestionCount", assignment.getTotalQuestionCount())
+                .set("questionReviews", assignment.getQuestionReviews())
+                .set("reviewStatus", assignment.getReviewStatus())
+                .set("feedback", assignment.getFeedback())
+                .set("status", AssignmentStatus.SUBMITTED)
+                .set("submittedAt", assignment.getSubmittedAt())
+                .set("completedAt", assignment.getCompletedAt())
+                .set("sectionAttempts", assignment.getSectionAttempts())
+                .set("draftCode", null)
+                .set("draftAnswers", new HashMap<>())
+                .set("draftSavedAt", null);
+
+        AssessmentAssignment updatedAssignment = mongoTemplate.findAndModify(
+                query,
+                update,
+                FindAndModifyOptions.options().returnNew(true),
+                AssessmentAssignment.class
+        );
+
+        if (updatedAssignment != null) {
+            return updatedAssignment;
+        }
+
+        AssessmentAssignment currentAssignment = assignmentRepository.findById(assignment.getId())
+                .orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
+
+        if (currentAssignment.getStatus() == AssignmentStatus.SUBMITTED ||
+                currentAssignment.getStatus() == AssignmentStatus.GRADED) {
+            return currentAssignment;
+        }
+
+        throw new IllegalArgumentException("Assignment could not be submitted. Please refresh and try again.");
     }
 
     public AssessmentAssignment gradeAssignment(
@@ -815,6 +963,9 @@ public class AssessmentService {
         target.setAssessmentId(source.getAssessmentId());
         target.setAssessmentTitle(source.getAssessmentTitle());
         target.setAssessmentType(source.getAssessmentType());
+        target.setAssessmentStatus(source.getAssessmentStatus());
+        target.setAssessmentVersion(source.getAssessmentVersion());
+        target.setAssessmentPublishedAt(source.getAssessmentPublishedAt());
         target.setLanguage(source.getLanguage());
         target.setPrompt(source.getPrompt());
         target.setStarterCode(source.getStarterCode());
@@ -1994,6 +2145,40 @@ public class AssessmentService {
         });
 
         return normalized;
+    }
+
+    private String normalizeDraftCode(String draftCode) {
+        if (draftCode == null) {
+            return null;
+        }
+
+        return draftCode.trim();
+    }
+
+    private void validateDraftPayload(SaveAssignmentDraftRequest request) {
+        if (request.getDraftCode() != null && request.getDraftCode().length() > MAX_DRAFT_CODE_LENGTH) {
+            throw new IllegalArgumentException("Draft code is too large.");
+        }
+
+        Map<String, String> draftAnswers = request.getDraftAnswers();
+
+        if (draftAnswers == null) {
+            return;
+        }
+
+        if (draftAnswers.size() > MAX_DRAFT_ANSWERS) {
+            throw new IllegalArgumentException("Draft contains too many answers.");
+        }
+
+        draftAnswers.forEach((questionId, answer) -> {
+            if (questionId != null && questionId.length() > MAX_DRAFT_QUESTION_ID_LENGTH) {
+                throw new IllegalArgumentException("Draft question identifier is too large.");
+            }
+
+            if (answer != null && answer.length() > MAX_DRAFT_ANSWER_LENGTH) {
+                throw new IllegalArgumentException("Draft answer is too large.");
+            }
+        });
     }
 
     private String resolveSubmittedAnswerSummary(Map<String, String> submittedAnswers) {

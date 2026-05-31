@@ -4,6 +4,7 @@ import app.SkillSync.dto.AcceptCandidateInviteRequest;
 import app.SkillSync.dto.AcceptTeamInviteRequest;
 import app.SkillSync.dto.AuthResponse;
 import app.SkillSync.dto.CandidateInvitePreviewResponse;
+import app.SkillSync.dto.OAuthExchangeRequest;
 import app.SkillSync.dto.RegisterRequest;
 import app.SkillSync.dto.TeamInvitePreviewResponse;
 import app.SkillSync.model.AuthTokenType;
@@ -15,7 +16,7 @@ import app.SkillSync.model.User;
 import app.SkillSync.repository.CandidateRepository;
 import app.SkillSync.repository.OrganizationRepository;
 import app.SkillSync.repository.UserRepository;
-import app.SkillSync.security.JwtService;
+import app.SkillSync.security.AuthCookieService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -36,7 +37,7 @@ class AuthServiceTest {
     private OrganizationRepository organizationRepository;
     private PasswordEncoder passwordEncoder;
     private AuthenticationManager authenticationManager;
-    private JwtService jwtService;
+    private AuthCookieService authCookieService;
     private EmailTokenService emailTokenService;
     private MailService mailService;
     private AuditLogService auditLogService;
@@ -49,7 +50,7 @@ class AuthServiceTest {
         organizationRepository = mock(OrganizationRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
         authenticationManager = mock(AuthenticationManager.class);
-        jwtService = mock(JwtService.class);
+        authCookieService = mock(AuthCookieService.class);
         emailTokenService = mock(EmailTokenService.class);
         mailService = mock(MailService.class);
         auditLogService = mock(AuditLogService.class);
@@ -58,7 +59,7 @@ class AuthServiceTest {
                 userRepository,
                 passwordEncoder,
                 authenticationManager,
-                jwtService,
+                authCookieService,
                 candidateRepository,
                 organizationRepository,
                 emailTokenService,
@@ -112,7 +113,7 @@ class AuthServiceTest {
                 contains("/verify-email?token=verification-token")
         );
         verify(candidateRepository, never()).findAllByEmailIgnoreCase(anyString());
-        verify(jwtService, never()).generateToken(any(User.class));
+        verify(authCookieService, never()).createToken(any(User.class));
     }
 
     @Test
@@ -163,7 +164,7 @@ class AuthServiceTest {
         verify(candidateRepository, never()).save(any(Candidate.class));
         verify(organizationRepository, never()).save(any());
         verify(userRepository, never()).save(any(User.class));
-        verify(jwtService, never()).generateToken(any(User.class));
+        verify(authCookieService, never()).createToken(any(User.class));
     }
 
     @Test
@@ -191,7 +192,7 @@ class AuthServiceTest {
         verify(candidateRepository, never()).save(any(Candidate.class));
         verify(organizationRepository, never()).save(any());
         verify(userRepository, never()).save(any(User.class));
-        verify(jwtService, never()).generateToken(any(User.class));
+        verify(authCookieService, never()).createToken(any(User.class));
     }
 
     @Test
@@ -337,7 +338,7 @@ class AuthServiceTest {
                 .thenReturn(false);
         when(passwordEncoder.encode("Password123!")).thenReturn("encoded-password");
         when(userRepository.save(any(User.class))).thenReturn(savedUser);
-        when(jwtService.generateToken(savedUser)).thenReturn("jwt-token");
+        when(authCookieService.createToken(savedUser)).thenReturn("jwt-token");
 
         AuthResponse response = authService.acceptCandidateInvite(request);
 
@@ -349,6 +350,47 @@ class AuthServiceTest {
 
         verify(candidateRepository).save(candidate);
         verify(emailTokenService).markUsed(token);
+    }
+
+    @Test
+    void exchangeOAuthCodeReturnsAuthResponseAndMarksExchangeTokenUsed() {
+        OAuthExchangeRequest request = new OAuthExchangeRequest();
+        request.setCode("oauth-exchange-code");
+
+        EmailToken token = new EmailToken();
+        token.setUserId("user-123");
+        token.setEmail("admin@skillsync.com");
+
+        User user = new User();
+        user.setId("user-123");
+        user.setFullName("Admin Demo");
+        user.setEmail("admin@skillsync.com");
+        user.setRole(Role.ADMIN);
+        user.setEmailVerified(true);
+        user.setActive(true);
+
+        when(emailTokenService.validateToken(
+                eq("oauth-exchange-code"),
+                eq(AuthTokenType.OAUTH_EXCHANGE)
+        )).thenReturn(token);
+        when(userRepository.findById("user-123")).thenReturn(Optional.of(user));
+        when(authCookieService.createToken(user)).thenReturn("jwt-token");
+
+        AuthResponse response = authService.exchangeOAuthCode(request);
+
+        assertEquals("jwt-token", response.getToken());
+        assertEquals("user-123", response.getUserId());
+        assertEquals("admin@skillsync.com", response.getEmail());
+        assertEquals(Role.ADMIN, response.getRole());
+
+        verify(emailTokenService).markUsed(token);
+        verify(auditLogService).record(
+                eq(user),
+                eq("OAUTH_EXCHANGE_COMPLETED"),
+                eq("USER"),
+                eq("user-123"),
+                anyMap()
+        );
     }
 
     @Test
@@ -443,7 +485,7 @@ class AuthServiceTest {
                 .thenReturn(false);
         when(passwordEncoder.encode("Password123!")).thenReturn("encoded-password");
         when(userRepository.save(any(User.class))).thenReturn(savedUser);
-        when(jwtService.generateToken(savedUser)).thenReturn("jwt-token");
+        when(authCookieService.createToken(savedUser)).thenReturn("jwt-token");
 
         AuthResponse response = authService.acceptTeamInvite(request);
 

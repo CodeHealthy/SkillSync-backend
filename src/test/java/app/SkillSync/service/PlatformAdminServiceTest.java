@@ -1,10 +1,14 @@
 package app.SkillSync.service;
 
 import app.SkillSync.dto.PlatformAdminSummaryResponse;
+import app.SkillSync.dto.PlatformSubscriptionPlanRequest;
+import app.SkillSync.dto.SubscriptionPlanResponse;
 import app.SkillSync.model.Organization;
 import app.SkillSync.model.Role;
+import app.SkillSync.model.SubscriptionPlan;
 import app.SkillSync.model.User;
 import app.SkillSync.repository.OrganizationRepository;
+import app.SkillSync.repository.SubscriptionPlanRepository;
 import app.SkillSync.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +17,7 @@ import org.springframework.security.core.Authentication;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,6 +29,7 @@ class PlatformAdminServiceTest {
 
     private OrganizationRepository organizationRepository;
     private UserRepository userRepository;
+    private SubscriptionPlanRepository subscriptionPlanRepository;
     private AuditLogService auditLogService;
     private PlatformAdminService platformAdminService;
 
@@ -31,10 +37,12 @@ class PlatformAdminServiceTest {
     void setUp() {
         organizationRepository = mock(OrganizationRepository.class);
         userRepository = mock(UserRepository.class);
+        subscriptionPlanRepository = mock(SubscriptionPlanRepository.class);
         auditLogService = mock(AuditLogService.class);
         platformAdminService = new PlatformAdminService(
                 organizationRepository,
                 userRepository,
+                subscriptionPlanRepository,
                 auditLogService
         );
     }
@@ -106,6 +114,97 @@ class PlatformAdminServiceTest {
         );
     }
 
+    @Test
+    void createSubscriptionPlanAllowsSuperAdminAndStoresFeatureMap() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        PlatformSubscriptionPlanRequest request = planRequest("Growth");
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(subscriptionPlanRepository.findFirstByCodeIgnoreCase("growth"))
+                .thenReturn(Optional.empty());
+        when(subscriptionPlanRepository.save(org.mockito.ArgumentMatchers.any(SubscriptionPlan.class)))
+                .thenAnswer(invocation -> {
+                    SubscriptionPlan saved = invocation.getArgument(0);
+                    saved.setId("plan-1");
+                    return saved;
+                });
+
+        SubscriptionPlanResponse response = platformAdminService.createSubscriptionPlan(
+                authentication("owner@skillsync.com"),
+                request
+        );
+
+        assertEquals("growth", response.getCode());
+        assertEquals(25, response.getFeatures().get("activeAssessments"));
+        assertEquals(true, response.getFeatures().get("aiGeneration"));
+    }
+
+    @Test
+    void updateSubscriptionPlanRejectsDuplicatePlanCode() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        SubscriptionPlan existing = subscriptionPlan("plan-1", "growth");
+        SubscriptionPlan duplicate = subscriptionPlan("plan-2", "growth");
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(subscriptionPlanRepository.findById("plan-1"))
+                .thenReturn(Optional.of(existing));
+        when(subscriptionPlanRepository.findFirstByCodeIgnoreCase("growth"))
+                .thenReturn(Optional.of(duplicate));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> platformAdminService.updateSubscriptionPlan(
+                        authentication("owner@skillsync.com"),
+                        "plan-1",
+                        planRequest("Growth")
+                )
+        );
+
+        assertEquals("Subscription plan code already exists.", exception.getMessage());
+    }
+
+    @Test
+    void deactivateSubscriptionPlanPreventsDeactivatingFreePlan() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        SubscriptionPlan freePlan = subscriptionPlan("plan-free", "free");
+        freePlan.setIsFree(true);
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(subscriptionPlanRepository.findById("plan-free"))
+                .thenReturn(Optional.of(freePlan));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> platformAdminService.deactivateSubscriptionPlan(
+                        authentication("owner@skillsync.com"),
+                        "plan-free"
+                )
+        );
+
+        assertEquals("The free plan cannot be deactivated.", exception.getMessage());
+    }
+
     private Authentication authentication(String email) {
         return new UsernamePasswordAuthenticationToken(email, null);
     }
@@ -134,5 +233,31 @@ class PlatformAdminServiceTest {
         organization.setName(name);
         organization.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
         return organization;
+    }
+
+    private PlatformSubscriptionPlanRequest planRequest(String name) {
+        PlatformSubscriptionPlanRequest request = new PlatformSubscriptionPlanRequest();
+        request.setCode(name);
+        request.setName(name);
+        request.setCurrency("aed");
+        request.setBillingCycle("month");
+        request.setFeatures(Map.of(
+                "activeAssessments", 25,
+                "candidateInvites", 500,
+                "aiGeneration", true
+        ));
+        request.setHighlights(List.of("25 active assessments", "500 invites"));
+        request.setActive(true);
+        request.setIsFree(false);
+        return request;
+    }
+
+    private SubscriptionPlan subscriptionPlan(String id, String code) {
+        SubscriptionPlan plan = new SubscriptionPlan();
+        plan.setId(id);
+        plan.setCode(code);
+        plan.setName(code);
+        plan.setFeatures(Map.of());
+        return plan;
     }
 }

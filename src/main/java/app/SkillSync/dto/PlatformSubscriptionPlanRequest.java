@@ -1,44 +1,47 @@
-package app.SkillSync.model;
+package app.SkillSync.dto;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
-@Document(collection = "subscriptions")
-public class SubscriptionPlan {
+public class PlatformSubscriptionPlanRequest {
 
-    @Id
-    private String id;
-
+    @NotBlank
+    @Size(max = 80)
     private String code;
+
+    @NotBlank
+    @Size(max = 120)
     private String name;
+
+    @Size(max = 500)
     private String description;
+
+    @DecimalMin("0.00")
     private BigDecimal pricing;
+
+    @Size(max = 10)
     private String currency;
+
+    @Size(max = 40)
     private String billingCycle;
+
+    @Size(max = 255)
     private String stripePriceId;
+
     private Map<String, Object> features;
     private List<String> highlights;
     private Boolean recommended;
     private Boolean active;
-    private Integer displayOrder;
     private Boolean isFree;
-    private String created;
-    private String updated;
-
-    public String getId() {
-        return id;
-    }
+    private Integer displayOrder;
 
     public String getCode() {
         return code;
-    }
-
-    public void setCode(String code) {
-        this.code = code;
     }
 
     public String getName() {
@@ -81,16 +84,16 @@ public class SubscriptionPlan {
         return active;
     }
 
-    public Integer getDisplayOrder() {
-        return displayOrder;
-    }
-
     public Boolean getIsFree() {
         return isFree;
     }
 
-    public void setId(String id) {
-        this.id = id;
+    public Integer getDisplayOrder() {
+        return displayOrder;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
     }
 
     public void setName(String name) {
@@ -133,19 +136,11 @@ public class SubscriptionPlan {
         this.active = active;
     }
 
+    public void setIsFree(Boolean isFree) {
+        this.isFree = isFree;
+    }
+
     public void setDisplayOrder(Integer displayOrder) {
         this.displayOrder = displayOrder;
-    }
-
-    public void setIsFree(Boolean free) {
-        isFree = free;
-    }
-
-    public void setCreated(String created) {
-        this.created = created;
-    }
-
-    public void setUpdated(String updated) {
-        this.updated = updated;
     }
 }

@@ -5,12 +5,13 @@ import app.SkillSync.dto.BillingSessionResponse;
 import app.SkillSync.dto.BillingSubscriptionResponse;
 import app.SkillSync.dto.SubscriptionPlanResponse;
 import app.SkillSync.model.BillingSubscription;
-import app.SkillSync.model.SubscriptionFeatures;
+import app.SkillSync.model.ProcessedWebhookEvent;
 import app.SkillSync.model.SubscriptionPlan;
 import app.SkillSync.model.User;
 import app.SkillSync.repository.AssessmentRepository;
 import app.SkillSync.repository.BillingSubscriptionRepository;
 import app.SkillSync.repository.CandidateRepository;
+import app.SkillSync.repository.ProcessedWebhookEventRepository;
 import app.SkillSync.repository.SubscriptionPlanRepository;
 import app.SkillSync.repository.UserRepository;
 import com.stripe.Stripe;
@@ -37,6 +38,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class BillingService {
@@ -46,6 +48,7 @@ public class BillingService {
     private final AssessmentRepository assessmentRepository;
     private final CandidateRepository candidateRepository;
     private final SubscriptionPlanRepository subscriptionPlanRepository;
+    private final ProcessedWebhookEventRepository processedWebhookEventRepository;
     private final AuditLogService auditLogService;
 
     @Value("${billing.enabled:false}")
@@ -65,12 +68,14 @@ public class BillingService {
                           AssessmentRepository assessmentRepository,
                           CandidateRepository candidateRepository,
                           SubscriptionPlanRepository subscriptionPlanRepository,
+                          ProcessedWebhookEventRepository processedWebhookEventRepository,
                           AuditLogService auditLogService) {
         this.subscriptionRepository = subscriptionRepository;
         this.userRepository = userRepository;
         this.assessmentRepository = assessmentRepository;
         this.candidateRepository = candidateRepository;
         this.subscriptionPlanRepository = subscriptionPlanRepository;
+        this.processedWebhookEventRepository = processedWebhookEventRepository;
         this.auditLogService = auditLogService;
     }
 
@@ -192,13 +197,7 @@ public class BillingService {
 
     public void ensureFeatureAccess(String organizationId, String feature) {
         SubscriptionPlan plan = requireCurrentPlan(getOrCreateFreeSubscription(organizationId));
-        SubscriptionFeatures features = featuresOrDefault(plan);
-        boolean hasAccess = switch (feature) {
-            case "aiGeneration" -> Boolean.TRUE.equals(features.getAiGeneration());
-            case "proctoring" -> Boolean.TRUE.equals(features.getProctoring());
-            case "branding" -> Boolean.TRUE.equals(features.getBranding());
-            default -> true;
-        };
+        boolean hasAccess = hasFeatureAccess(plan, feature);
         if (!hasAccess) throw new IllegalArgumentException(feature + " is not available on your current plan.");
     }
 
@@ -207,7 +206,7 @@ public class BillingService {
     private UsageLimit getUsageLimit(String organizationId, String feature) {
         BillingSubscription subscription = getOrCreateFreeSubscription(organizationId);
         SubscriptionPlan plan = requireCurrentPlan(subscription);
-        SubscriptionFeatures features = featuresOrDefault(plan);
+        Map<String, Object> features = featuresOrDefault(plan);
 
         long used = switch (feature) {
             case "activeAssessments" -> assessmentRepository.countByOrganizationId(organizationId);
@@ -220,12 +219,7 @@ public class BillingService {
             default -> 0;
         };
 
-        Long limit = switch (feature) {
-            case "activeAssessments" -> features.getActiveAssessments();
-            case "candidateInvites" -> features.getCandidateInvites();
-            case "teamMembers" -> features.getTeamMembers();
-            default -> null;
-        };
+        Long limit = getNumericLimit(features, feature);
 
         return new UsageLimit(used, limit);
     }
@@ -311,11 +305,23 @@ public class BillingService {
         try { event = Webhook.constructEvent(payload, sigHeader, stripeWebhookSecret); }
         catch (SignatureVerificationException e) { throw new IllegalArgumentException("Invalid Stripe webhook signature."); }
 
+        if (event.getId() != null && processedWebhookEventRepository.existsById(event.getId())) {
+            return;
+        }
+
         switch (event.getType()) {
             case "checkout.session.completed" -> handleCheckoutCompleted(event);
             case "customer.subscription.created",
                  "customer.subscription.updated",
                  "customer.subscription.deleted" -> handleSubscriptionEvent(event);
+        }
+
+        if (event.getId() != null) {
+            processedWebhookEventRepository.save(new ProcessedWebhookEvent(
+                    event.getId(),
+                    event.getType(),
+                    Instant.now()
+            ));
         }
     }
 
@@ -412,7 +418,7 @@ public class BillingService {
     }
 
     private Map<String, Object> buildUsage(String orgId, SubscriptionPlan plan) {
-        SubscriptionFeatures f = featuresOrDefault(plan);
+        Map<String, Object> features = featuresOrDefault(plan);
         Map<String, Object> usage = new HashMap<>();
         usage.put("activeAssessments", assessmentRepository.countByOrganizationId(orgId));
         usage.put("candidateInvites", candidateRepository.countByOrganizationIdAndCreatedAtBetween(orgId, monthStart(), monthEnd()));
@@ -424,9 +430,7 @@ public class BillingService {
                         .filter(User::isActiveForLogin)
                         .count()
         );
-        usage.put("aiGeneration", f.getAiGeneration());
-        usage.put("proctoring", f.getProctoring());
-        usage.put("branding", f.getBranding());
+        features.forEach((feature, value) -> usage.putIfAbsent(feature, value));
         return usage;
     }
     private BillingSubscriptionResponse buildResponse(BillingSubscription subscription, String organizationId) {
@@ -441,9 +445,8 @@ public class BillingService {
     }
     public void ensureCanUseAiGeneration(String organizationId) {
         SubscriptionPlan plan = requireCurrentPlan(getOrCreateFreeSubscription(organizationId));
-        SubscriptionFeatures features = featuresOrDefault(plan);
 
-        if (!Boolean.TRUE.equals(features.getAiGeneration())) {
+        if (!hasFeatureAccess(plan, "aiGeneration")) {
             throw new IllegalArgumentException("AI generation feature is not available on your current plan.");
         }
     }
@@ -466,7 +469,54 @@ public class BillingService {
         return response;
     }
 
-    private SubscriptionFeatures featuresOrDefault(SubscriptionPlan plan) {
-        return plan.getFeatures() == null ? new SubscriptionFeatures() : plan.getFeatures();
+    private Map<String, Object> featuresOrDefault(SubscriptionPlan plan) {
+        return Optional.ofNullable(plan.getFeatures()).orElseGet(Map::of);
+    }
+
+    private Long getNumericLimit(Map<String, Object> features, String feature) {
+        Object value = features.get(feature);
+
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Long.parseLong(text.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private boolean hasFeatureAccess(SubscriptionPlan plan, String feature) {
+        Object value = featuresOrDefault(plan).get(feature);
+
+        if (value == null) {
+            return false;
+        }
+
+        if (value instanceof Boolean flag) {
+            return flag;
+        }
+
+        if (value instanceof Number number) {
+            return number.longValue() > 0;
+        }
+
+        if (value instanceof String text) {
+            String normalized = text.trim().toLowerCase(Locale.ROOT);
+            return normalized.equals("true") ||
+                    normalized.equals("yes") ||
+                    normalized.equals("unlimited");
+        }
+
+        return false;
     }
 }

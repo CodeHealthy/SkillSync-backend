@@ -39,15 +39,11 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
             OAuth2User oauthUser = (OAuth2User) authentication.getPrincipal();
 
             User user = oAuthLoginService.processGoogleLogin(oauthUser);
-            String token = oAuthLoginService.generateToken(user);
+            String exchangeCode = oAuthLoginService.createExchangeCode(user);
 
             String redirectUrl = UriComponentsBuilder
                     .fromUriString(frontendSuccessUrl)
-                    .queryParam("token", token)
-                    .queryParam("userId", user.getId())
-                    .queryParam("fullName", user.getFullName())
-                    .queryParam("email", user.getEmail())
-                    .queryParam("role", user.getRole().name())
+                    .queryParam("code", exchangeCode)
                     .build()
                     .encode()
                     .toUriString();

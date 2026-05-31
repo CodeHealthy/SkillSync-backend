@@ -54,7 +54,7 @@ public class CandidateController {
         return ResponseEntity.ok(candidateService.searchCandidatesByName(name));
     }
 
-    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR','CANDIDATE')")
+    @PreAuthorize("hasAnyRole('ADMIN','ORG_ADMIN','RECRUITER','HIRING_MANAGER','EVALUATOR')")
     @PostMapping("/{candidateId}/test-results")
     public ResponseEntity<TestResult> submitTestResult(
             @PathVariable String candidateId,

@@ -1,6 +1,7 @@
 package app.SkillSync.model;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
@@ -37,6 +38,9 @@ public class Assessment {
     private List<AssessmentSection> sections = new ArrayList<>();
 
     private Instant createdAt;
+    private Instant publishedAt;
+    private Integer version = 1;
+    @Indexed
     private String organizationId;
 
     public Assessment() {
@@ -102,6 +106,14 @@ public class Assessment {
         return createdAt;
     }
 
+    public Instant getPublishedAt() {
+        return publishedAt;
+    }
+
+    public Integer getVersion() {
+        return version;
+    }
+
     public String getOrganizationId() {
         return organizationId;
     }
@@ -164,6 +176,14 @@ public class Assessment {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public void setPublishedAt(Instant publishedAt) {
+        this.publishedAt = publishedAt;
+    }
+
+    public void setVersion(Integer version) {
+        this.version = version == null || version < 1 ? 1 : version;
     }
 
     public void setOrganizationId(String organizationId) {
