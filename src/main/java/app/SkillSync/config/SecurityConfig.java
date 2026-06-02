@@ -91,15 +91,12 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
                 )
                 .exceptionHandling(exceptions -> exceptions
-                        .defaultAuthenticationEntryPointFor(
+                        .authenticationEntryPoint(
                                 (request, response, authException) ->
                                         response.sendError(
                                                 HttpServletResponse.SC_UNAUTHORIZED,
                                                 "Authentication is required."
-                                        ),
-                                request -> request.getRequestURI().startsWith(
-                                        request.getContextPath() + "/api/"
-                                )
+                                        )
                         )
                 )
                 .authorizeHttpRequests(auth -> auth
