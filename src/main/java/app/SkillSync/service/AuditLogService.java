@@ -6,15 +6,21 @@ import app.SkillSync.model.User;
 import app.SkillSync.repository.AuditLogRepository;
 import app.SkillSync.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Service
 public class AuditLogService {
@@ -24,13 +30,16 @@ public class AuditLogService {
 
     private final AuditLogRepository auditLogRepository;
     private final UserRepository userRepository;
+    private final MongoTemplate mongoTemplate;
 
     public AuditLogService(
             AuditLogRepository auditLogRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            MongoTemplate mongoTemplate
     ) {
         this.auditLogRepository = auditLogRepository;
         this.userRepository = userRepository;
+        this.mongoTemplate = mongoTemplate;
     }
 
     public void record(
@@ -125,7 +134,10 @@ public class AuditLogService {
 
     public List<AuditLogResponse> listPlatformLogs(
             Authentication authentication,
-            String action
+            String action,
+            String organizationId,
+            String actorEmail,
+            String targetType
     ) {
         User user = requireUser(authentication);
 
@@ -133,12 +145,62 @@ public class AuditLogService {
             throw new IllegalArgumentException("Only platform super admins can view platform audit logs.");
         }
 
-        String normalizedAction = trimToNull(action);
-        List<AuditLog> logs = normalizedAction == null
-                ? auditLogRepository.findTop200ByOrderByCreatedAtDesc()
-                : auditLogRepository.findTop200ByActionOrderByCreatedAtDesc(normalizeAction(normalizedAction));
+        List<AuditLog> logs = findPlatformLogs(action, organizationId, actorEmail, targetType);
 
         return logs.stream().map(this::toResponse).toList();
+    }
+
+    private List<AuditLog> findPlatformLogs(
+            String action,
+            String organizationId,
+            String actorEmail,
+            String targetType
+    ) {
+        String normalizedAction = trimToNull(action);
+        String normalizedOrganizationId = trimToNull(organizationId);
+        String normalizedActorEmail = trimToNull(actorEmail);
+        String normalizedTargetType = trimToNull(targetType);
+
+        if (normalizedOrganizationId == null &&
+                normalizedActorEmail == null &&
+                normalizedTargetType == null) {
+            return normalizedAction == null
+                    ? auditLogRepository.findTop200ByOrderByCreatedAtDesc()
+                    : auditLogRepository.findTop200ByActionOrderByCreatedAtDesc(
+                            normalizeAction(normalizedAction)
+                    );
+        }
+
+        List<Criteria> filters = new ArrayList<>();
+
+        if (normalizedAction != null) {
+            filters.add(Criteria.where("action").is(normalizeAction(normalizedAction)));
+        }
+
+        if (normalizedOrganizationId != null) {
+            filters.add(Criteria.where("organizationId").is(normalizedOrganizationId));
+        }
+
+        if (normalizedActorEmail != null) {
+            filters.add(Criteria.where("actorEmail").regex(
+                    "^" + Pattern.quote(normalizedActorEmail) + "$",
+                    "i"
+            ));
+        }
+
+        if (normalizedTargetType != null) {
+            filters.add(Criteria.where("targetType").is(normalizeTargetType(normalizedTargetType)));
+        }
+
+        Query query = new Query()
+                .with(Sort.by(Sort.Direction.DESC, "createdAt"))
+                .limit(200);
+
+        if (!filters.isEmpty()) {
+            query.addCriteria(new Criteria().andOperator(filters));
+        }
+
+        return mongoTemplate.find(query, AuditLog.class);
     }
 
     private User requireUser(Authentication authentication) {

@@ -13,9 +13,14 @@ import java.util.List;
 public class CustomUserDetailsService implements org.springframework.security.core.userdetails.UserDetailsService {
 
     private final UserRepository userRepository;
+    private final OrganizationAccessService organizationAccessService;
 
-    public CustomUserDetailsService(UserRepository userRepository) {
+    public CustomUserDetailsService(
+            UserRepository userRepository,
+            OrganizationAccessService organizationAccessService
+    ) {
         this.userRepository = userRepository;
+        this.organizationAccessService = organizationAccessService;
     }
 
     @Override
@@ -25,6 +30,12 @@ public class CustomUserDetailsService implements org.springframework.security.co
 
         if (!user.isActiveForLogin()) {
             throw new UsernameNotFoundException("User is deactivated: " + email);
+        }
+
+        try {
+            organizationAccessService.requireActiveOrganizationForUser(user);
+        } catch (IllegalArgumentException exception) {
+            throw new UsernameNotFoundException(exception.getMessage(), exception);
         }
 
         return new org.springframework.security.core.userdetails.User(

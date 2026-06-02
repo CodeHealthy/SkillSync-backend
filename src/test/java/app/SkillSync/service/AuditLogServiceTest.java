@@ -8,6 +8,8 @@ import app.SkillSync.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 
 import java.util.List;
@@ -25,13 +27,15 @@ class AuditLogServiceTest {
 
     private AuditLogRepository auditLogRepository;
     private UserRepository userRepository;
+    private MongoTemplate mongoTemplate;
     private AuditLogService auditLogService;
 
     @BeforeEach
     void setUp() {
         auditLogRepository = mock(AuditLogRepository.class);
         userRepository = mock(UserRepository.class);
-        auditLogService = new AuditLogService(auditLogRepository, userRepository);
+        mongoTemplate = mock(MongoTemplate.class);
+        auditLogService = new AuditLogService(auditLogRepository, userRepository, mongoTemplate);
     }
 
     @Test
@@ -95,6 +99,35 @@ class AuditLogServiceTest {
                 auditLogService.listOrganizationLogs(
                         new UsernamePasswordAuthenticationToken("admin@example.com", null),
                         null
+                ).size()
+        );
+    }
+
+    @Test
+    void listPlatformLogsUsesDynamicFiltersForGovernanceSearch() {
+        User superAdmin = user(Role.SUPER_ADMIN, null);
+        AuditLog log = new AuditLog();
+        log.setId("audit-1");
+        log.setAction("PLATFORM_USER_UPDATED");
+        log.setActorEmail("owner@example.com");
+        log.setTargetType("USER");
+        log.setOrganizationId("org-1");
+
+        when(userRepository.findByEmail("admin@example.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(mongoTemplate.find(
+                org.mockito.ArgumentMatchers.any(Query.class),
+                org.mockito.ArgumentMatchers.eq(AuditLog.class)
+        )).thenReturn(List.of(log));
+
+        assertEquals(
+                1,
+                auditLogService.listPlatformLogs(
+                        new UsernamePasswordAuthenticationToken("admin@example.com", null),
+                        "platform_user_updated",
+                        "org-1",
+                        "owner@example.com",
+                        "user"
                 ).size()
         );
     }

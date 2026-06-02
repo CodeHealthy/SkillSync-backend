@@ -27,6 +27,7 @@ public class CandidateService {
     private final EmailTokenService emailTokenService;
     private final MailService mailService;
     private final AuditLogService auditLogService;
+    private final OrganizationAccessService organizationAccessService;
 
     @Value("${app.frontend.base-url:http://localhost:3000}")
     private String frontendBaseUrl;
@@ -37,7 +38,8 @@ public class CandidateService {
             BillingService billingService,
             EmailTokenService emailTokenService,
             MailService mailService,
-            AuditLogService auditLogService
+            AuditLogService auditLogService,
+            OrganizationAccessService organizationAccessService
     ) {
         this.candidateRepository = candidateRepository;
         this.userRepository = userRepository;
@@ -45,6 +47,7 @@ public class CandidateService {
         this.emailTokenService = emailTokenService;
         this.mailService = mailService;
         this.auditLogService = auditLogService;
+        this.organizationAccessService = organizationAccessService;
     }
 
     private User getCurrentUser() {
@@ -64,6 +67,8 @@ public class CandidateService {
         if (organizationId == null || organizationId.isBlank()) {
             throw new RuntimeException("Admin is not linked to an organization.");
         }
+
+        organizationAccessService.requireActiveOrganization(organizationId);
 
         return candidateRepository.findByOrganizationId(organizationId);
     }
@@ -201,6 +206,7 @@ public class CandidateService {
             throw new RuntimeException("Admin is not linked to an organization.");
         }
 
+        organizationAccessService.requireActiveOrganization(organizationId);
         return organizationId;
     }
 

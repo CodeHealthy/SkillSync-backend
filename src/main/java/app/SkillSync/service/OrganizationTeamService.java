@@ -31,6 +31,7 @@ public class OrganizationTeamService {
     private final MailService mailService;
     private final BillingService billingService;
     private final AuditLogService auditLogService;
+    private final OrganizationAccessService organizationAccessService;
 
     @Value("${app.frontend.base-url:http://localhost:3000}")
     private String frontendBaseUrl;
@@ -42,7 +43,8 @@ public class OrganizationTeamService {
             EmailTokenService emailTokenService,
             MailService mailService,
             BillingService billingService,
-            AuditLogService auditLogService
+            AuditLogService auditLogService,
+            OrganizationAccessService organizationAccessService
     ) {
         this.userRepository = userRepository;
         this.organizationRepository = organizationRepository;
@@ -51,6 +53,7 @@ public class OrganizationTeamService {
         this.mailService = mailService;
         this.billingService = billingService;
         this.auditLogService = auditLogService;
+        this.organizationAccessService = organizationAccessService;
     }
 
     public List<TeamMemberResponse> listTeamMembers(Authentication authentication) {
@@ -261,6 +264,7 @@ public class OrganizationTeamService {
             throw new IllegalArgumentException("Admin is not linked to an organization.");
         }
 
+        organizationAccessService.requireActiveOrganization(user.getOrganizationId());
         return user.getOrganizationId();
     }
 

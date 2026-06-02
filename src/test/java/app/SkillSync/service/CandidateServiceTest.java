@@ -29,6 +29,7 @@ class CandidateServiceTest {
     private EmailTokenService emailTokenService;
     private MailService mailService;
     private AuditLogService auditLogService;
+    private OrganizationAccessService organizationAccessService;
     private CandidateService candidateService;
 
     @BeforeEach
@@ -39,13 +40,15 @@ class CandidateServiceTest {
         emailTokenService = mock(EmailTokenService.class);
         mailService = mock(MailService.class);
         auditLogService = mock(AuditLogService.class);
+        organizationAccessService = mock(OrganizationAccessService.class);
         candidateService = new CandidateService(
                 candidateRepository,
                 userRepository,
                 billingService,
                 emailTokenService,
                 mailService,
-                auditLogService
+                auditLogService,
+                organizationAccessService
         );
         ReflectionTestUtils.setField(
                 candidateService,

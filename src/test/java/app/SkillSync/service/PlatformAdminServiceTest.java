@@ -1,9 +1,14 @@
 package app.SkillSync.service;
 
 import app.SkillSync.dto.PlatformAdminSummaryResponse;
+import app.SkillSync.dto.PlatformOrganizationResponse;
+import app.SkillSync.dto.PlatformOrganizationUpdateRequest;
 import app.SkillSync.dto.PlatformSubscriptionPlanRequest;
+import app.SkillSync.dto.PlatformUserResponse;
+import app.SkillSync.dto.PlatformUserUpdateRequest;
 import app.SkillSync.dto.SubscriptionPlanResponse;
 import app.SkillSync.model.Organization;
+import app.SkillSync.model.OrganizationStatus;
 import app.SkillSync.model.Role;
 import app.SkillSync.model.SubscriptionPlan;
 import app.SkillSync.model.User;
@@ -203,6 +208,255 @@ class PlatformAdminServiceTest {
         );
 
         assertEquals("The free plan cannot be deactivated.", exception.getMessage());
+    }
+
+    @Test
+    void updateUserAllowsSuperAdminToChangeRoleAndActiveStatus() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        User targetUser = user(
+                "user-1",
+                "Recruiter",
+                "recruiter@skillsync.com",
+                Role.RECRUITER,
+                "org-1"
+        );
+        PlatformUserUpdateRequest request = new PlatformUserUpdateRequest();
+        request.setRole(Role.HIRING_MANAGER);
+        request.setActive(false);
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(userRepository.findById("user-1"))
+                .thenReturn(Optional.of(targetUser));
+        when(organizationRepository.findById("org-1"))
+                .thenReturn(Optional.of(organization("org-1", "Existing Org")));
+        when(userRepository.save(targetUser)).thenReturn(targetUser);
+
+        PlatformUserResponse response = platformAdminService.updateUser(
+                authentication("owner@skillsync.com"),
+                "user-1",
+                request
+        );
+
+        assertEquals(Role.HIRING_MANAGER, response.getRole());
+        assertEquals(false, response.getActive());
+    }
+
+    @Test
+    void updateUserAllowsSuperAdminToMoveOrganizationStaffToAnotherOrganization() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        User targetUser = user(
+                "user-1",
+                "Recruiter",
+                "recruiter@skillsync.com",
+                Role.RECRUITER,
+                "org-1"
+        );
+        PlatformUserUpdateRequest request = new PlatformUserUpdateRequest();
+        request.setRole(Role.HIRING_MANAGER);
+        request.setActive(true);
+        request.setOrganizationId("org-2");
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(userRepository.findById("user-1"))
+                .thenReturn(Optional.of(targetUser));
+        when(organizationRepository.findById("org-2"))
+                .thenReturn(Optional.of(organization("org-2", "Next Org")));
+        when(userRepository.save(targetUser)).thenReturn(targetUser);
+
+        PlatformUserResponse response = platformAdminService.updateUser(
+                authentication("owner@skillsync.com"),
+                "user-1",
+                request
+        );
+
+        assertEquals(Role.HIRING_MANAGER, response.getRole());
+        assertEquals("org-2", response.getOrganizationId());
+    }
+
+    @Test
+    void updateUserRejectsOrganizationStaffRoleWithoutOrganization() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        User targetUser = user(
+                "user-1",
+                "Candidate",
+                "candidate@skillsync.com",
+                Role.CANDIDATE,
+                null
+        );
+        PlatformUserUpdateRequest request = new PlatformUserUpdateRequest();
+        request.setRole(Role.RECRUITER);
+        request.setActive(true);
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(userRepository.findById("user-1"))
+                .thenReturn(Optional.of(targetUser));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> platformAdminService.updateUser(
+                        authentication("owner@skillsync.com"),
+                        "user-1",
+                        request
+                )
+        );
+
+        assertEquals("Organization is required for organization staff roles.", exception.getMessage());
+    }
+
+    @Test
+    void updateUserPreventsRemovingLastActiveSuperAdmin() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        PlatformUserUpdateRequest request = new PlatformUserUpdateRequest();
+        request.setRole(Role.ORG_ADMIN);
+        request.setActive(true);
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(userRepository.findById("owner-1"))
+                .thenReturn(Optional.of(superAdmin));
+        when(userRepository.findAll()).thenReturn(List.of(superAdmin));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> platformAdminService.updateUser(
+                        authentication("owner@skillsync.com"),
+                        "owner-1",
+                        request
+                )
+        );
+
+        assertEquals("At least one active super admin is required.", exception.getMessage());
+    }
+
+    @Test
+    void updateOrganizationAllowsSuperAdminToRenameOrganization() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        Organization organization = organization("org-1", "Old Org");
+        User orgAdmin = user(
+                "admin-1",
+                "Org Admin",
+                "admin@skillsync.com",
+                Role.ORG_ADMIN,
+                "org-1"
+        );
+        PlatformOrganizationUpdateRequest request = new PlatformOrganizationUpdateRequest();
+        request.setName("New Org");
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(organizationRepository.findById("org-1"))
+                .thenReturn(Optional.of(organization));
+        when(organizationRepository.findFirstByNameIgnoreCase("New Org"))
+                .thenReturn(Optional.empty());
+        when(organizationRepository.save(organization)).thenReturn(organization);
+        when(userRepository.findAll()).thenReturn(List.of(superAdmin, orgAdmin));
+
+        PlatformOrganizationResponse response = platformAdminService.updateOrganization(
+                authentication("owner@skillsync.com"),
+                "org-1",
+                request
+        );
+
+        assertEquals("New Org", response.getName());
+        assertEquals(1, response.getUserCount());
+    }
+
+    @Test
+    void updateOrganizationRejectsDuplicateOrganizationName() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        Organization organization = organization("org-1", "Old Org");
+        Organization duplicate = organization("org-2", "New Org");
+        PlatformOrganizationUpdateRequest request = new PlatformOrganizationUpdateRequest();
+        request.setName("New Org");
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(organizationRepository.findById("org-1"))
+                .thenReturn(Optional.of(organization));
+        when(organizationRepository.findFirstByNameIgnoreCase("New Org"))
+                .thenReturn(Optional.of(duplicate));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> platformAdminService.updateOrganization(
+                        authentication("owner@skillsync.com"),
+                        "org-1",
+                        request
+                )
+        );
+
+        assertEquals("Organization name already exists.", exception.getMessage());
+    }
+
+    @Test
+    void updateOrganizationAllowsSuperAdminToSuspendOrganization() {
+        User superAdmin = user(
+                "owner-1",
+                "Platform Owner",
+                "owner@skillsync.com",
+                Role.SUPER_ADMIN,
+                null
+        );
+        Organization organization = organization("org-1", "Hiring Co");
+        PlatformOrganizationUpdateRequest request = new PlatformOrganizationUpdateRequest();
+        request.setName("Hiring Co");
+        request.setStatus(OrganizationStatus.SUSPENDED);
+
+        when(userRepository.findByEmail("owner@skillsync.com"))
+                .thenReturn(Optional.of(superAdmin));
+        when(organizationRepository.findById("org-1"))
+                .thenReturn(Optional.of(organization));
+        when(organizationRepository.findFirstByNameIgnoreCase("Hiring Co"))
+                .thenReturn(Optional.of(organization));
+        when(organizationRepository.save(organization)).thenReturn(organization);
+        when(userRepository.findAll()).thenReturn(List.of(superAdmin));
+
+        PlatformOrganizationResponse response = platformAdminService.updateOrganization(
+                authentication("owner@skillsync.com"),
+                "org-1",
+                request
+        );
+
+        assertEquals(OrganizationStatus.SUSPENDED, response.getStatus());
     }
 
     private Authentication authentication(String email) {

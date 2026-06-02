@@ -45,6 +45,9 @@ class BillingServiceTest {
     @Mock
     private AuditLogService auditLogService;
 
+    @Mock
+    private OrganizationAccessService organizationAccessService;
+
     private BillingService billingService;
 
     @BeforeEach
@@ -56,7 +59,8 @@ class BillingServiceTest {
                 candidateRepository,
                 subscriptionPlanRepository,
                 processedWebhookEventRepository,
-                auditLogService
+                auditLogService,
+                organizationAccessService
         );
     }
 

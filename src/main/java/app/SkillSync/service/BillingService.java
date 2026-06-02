@@ -50,6 +50,7 @@ public class BillingService {
     private final SubscriptionPlanRepository subscriptionPlanRepository;
     private final ProcessedWebhookEventRepository processedWebhookEventRepository;
     private final AuditLogService auditLogService;
+    private final OrganizationAccessService organizationAccessService;
 
     @Value("${billing.enabled:false}")
     private boolean billingEnabled;
@@ -69,7 +70,8 @@ public class BillingService {
                           CandidateRepository candidateRepository,
                           SubscriptionPlanRepository subscriptionPlanRepository,
                           ProcessedWebhookEventRepository processedWebhookEventRepository,
-                          AuditLogService auditLogService) {
+                          AuditLogService auditLogService,
+                          OrganizationAccessService organizationAccessService) {
         this.subscriptionRepository = subscriptionRepository;
         this.userRepository = userRepository;
         this.assessmentRepository = assessmentRepository;
@@ -77,6 +79,7 @@ public class BillingService {
         this.subscriptionPlanRepository = subscriptionPlanRepository;
         this.processedWebhookEventRepository = processedWebhookEventRepository;
         this.auditLogService = auditLogService;
+        this.organizationAccessService = organizationAccessService;
     }
 
     // ===================== Public Methods =====================
@@ -181,21 +184,25 @@ public class BillingService {
     // ===================== Feature Checks =====================
 
     public void ensureCanCreateAssessment(String organizationId) {
+        organizationAccessService.requireActiveOrganization(organizationId);
         UsageLimit limit = getUsageLimit(organizationId, "activeAssessments");
         if (limit.isAtLimit()) throw new IllegalArgumentException("Your plan has reached active assessment limit.");
     }
 
     public void ensureCanInviteCandidate(String organizationId) {
+        organizationAccessService.requireActiveOrganization(organizationId);
         UsageLimit limit = getUsageLimit(organizationId, "candidateInvites");
         if (limit.isAtLimit()) throw new IllegalArgumentException("Your plan has reached candidate invite limit.");
     }
 
     public void ensureCanInviteTeamMember(String organizationId) {
+        organizationAccessService.requireActiveOrganization(organizationId);
         UsageLimit limit = getUsageLimit(organizationId, "teamMembers");
         if (limit.isAtLimit()) throw new IllegalArgumentException("Your plan has reached team member limit.");
     }
 
     public void ensureFeatureAccess(String organizationId, String feature) {
+        organizationAccessService.requireActiveOrganization(organizationId);
         SubscriptionPlan plan = requireCurrentPlan(getOrCreateFreeSubscription(organizationId));
         boolean hasAccess = hasFeatureAccess(plan, feature);
         if (!hasAccess) throw new IllegalArgumentException(feature + " is not available on your current plan.");
@@ -444,6 +451,7 @@ public class BillingService {
         return response;
     }
     public void ensureCanUseAiGeneration(String organizationId) {
+        organizationAccessService.requireActiveOrganization(organizationId);
         SubscriptionPlan plan = requireCurrentPlan(getOrCreateFreeSubscription(organizationId));
 
         if (!hasFeatureAccess(plan, "aiGeneration")) {

@@ -43,6 +43,7 @@ class AssessmentServiceTest {
     private OrganizationRepository organizationRepository;
     private BillingService billingService;
     private AuditLogService auditLogService;
+    private OrganizationAccessService organizationAccessService;
     private MongoTemplate mongoTemplate;
     private AssessmentService assessmentService;
 
@@ -56,6 +57,7 @@ class AssessmentServiceTest {
         organizationRepository = mock(OrganizationRepository.class);
         billingService = mock(BillingService.class);
         auditLogService = mock(AuditLogService.class);
+        organizationAccessService = mock(OrganizationAccessService.class);
         mongoTemplate = mock(MongoTemplate.class);
 
         assessmentService = new AssessmentService(
@@ -67,6 +69,7 @@ class AssessmentServiceTest {
                 organizationRepository,
                 billingService,
                 auditLogService,
+                organizationAccessService,
                 mongoTemplate
         );
     }

@@ -48,6 +48,7 @@ public class AuthService {
     private final EmailTokenService emailTokenService;
     private final MailService mailService;
     private final AuditLogService auditLogService;
+    private final OrganizationAccessService organizationAccessService;
 
     @Value("${app.frontend.base-url:http://localhost:3000}")
     private String frontendBaseUrl;
@@ -61,7 +62,8 @@ public class AuthService {
             OrganizationRepository organizationRepository,
             EmailTokenService emailTokenService,
             MailService mailService,
-            AuditLogService auditLogService
+            AuditLogService auditLogService,
+            OrganizationAccessService organizationAccessService
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
@@ -72,6 +74,7 @@ public class AuthService {
         this.emailTokenService = emailTokenService;
         this.mailService = mailService;
         this.auditLogService = auditLogService;
+        this.organizationAccessService = organizationAccessService;
     }
 
     public void register(RegisterRequest request) {
@@ -173,6 +176,19 @@ public class AuthService {
             throw new IllegalArgumentException("This account has been deactivated.");
         }
 
+        try {
+            organizationAccessService.requireActiveOrganizationForUser(user);
+        } catch (IllegalArgumentException exception) {
+            auditLogService.record(
+                    user,
+                    "LOGIN_BLOCKED",
+                    "ORGANIZATION",
+                    user.getOrganizationId(),
+                    Map.of("reason", "ORGANIZATION_SUSPENDED")
+            );
+            throw exception;
+        }
+
         auditLogService.record(
                 user,
                 "LOGIN_SUCCESS",
@@ -258,6 +274,8 @@ public class AuthService {
             throw new IllegalArgumentException("This account has been deactivated.");
         }
 
+        organizationAccessService.requireActiveOrganizationForUser(user);
+
         emailTokenService.markUsed(token);
 
         auditLogService.record(
@@ -278,16 +296,15 @@ public class AuthService {
         );
 
         Candidate candidate = findInvitedCandidate(token);
-        String organizationName = organizationRepository
-                .findById(candidate.getOrganizationId())
-                .map(Organization::getName)
-                .orElse(null);
+        Organization organization = organizationAccessService.requireActiveOrganization(
+                candidate.getOrganizationId()
+        );
 
         return new CandidateInvitePreviewResponse(
                 candidate.getId(),
                 candidate.getName(),
                 candidate.getEmail(),
-                organizationName
+                organization.getName()
         );
     }
 
@@ -298,6 +315,7 @@ public class AuthService {
         );
 
         Candidate candidate = findInvitedCandidate(token);
+        organizationAccessService.requireActiveOrganization(candidate.getOrganizationId());
         String normalizedEmail = normalizeEmail(candidate.getEmail());
 
         if (userRepository.existsByEmail(normalizedEmail)) {
@@ -343,6 +361,7 @@ public class AuthService {
         );
 
         Organization organization = findInviteOrganization(token);
+        organizationAccessService.requireActiveOrganization(organization.getId());
 
         return new TeamInvitePreviewResponse(
                 normalizeOptionalText(
@@ -363,6 +382,7 @@ public class AuthService {
         );
 
         Organization organization = findInviteOrganization(token);
+        organizationAccessService.requireActiveOrganization(organization.getId());
         String normalizedEmail = normalizeEmail(token.getEmail());
 
         if (userRepository.existsByEmail(normalizedEmail)) {

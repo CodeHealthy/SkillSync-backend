@@ -72,6 +72,7 @@ public class AssessmentService {
     private final OrganizationRepository organizationRepository;
     private final BillingService billingService;
     private final AuditLogService auditLogService;
+    private final OrganizationAccessService organizationAccessService;
     private final MongoTemplate mongoTemplate;
 
     public AssessmentService(
@@ -83,6 +84,7 @@ public class AssessmentService {
             OrganizationRepository organizationRepository,
             BillingService billingService,
             AuditLogService auditLogService,
+            OrganizationAccessService organizationAccessService,
             MongoTemplate mongoTemplate
     ) {
         this.assessmentRepository = assessmentRepository;
@@ -93,6 +95,7 @@ public class AssessmentService {
         this.organizationRepository = organizationRepository;
         this.billingService = billingService;
         this.auditLogService = auditLogService;
+        this.organizationAccessService = organizationAccessService;
         this.mongoTemplate = mongoTemplate;
     }
 
@@ -2065,12 +2068,16 @@ public class AssessmentService {
         if (user.getRole() == null || !user.getRole().isOrganizationStaff()) {
             throw new RuntimeException("You are not allowed to access organization assessments.");
         }
+
+        organizationAccessService.requireActiveOrganization(user.getOrganizationId());
     }
 
     private void requireAssessmentAuthor(User user) {
         if (user.getRole() == null || !user.getRole().canCreateAssessments()) {
             throw new RuntimeException("You are not allowed to manage assessments.");
         }
+
+        organizationAccessService.requireActiveOrganization(user.getOrganizationId());
     }
 
     private void requireResultReviewer(User user) {

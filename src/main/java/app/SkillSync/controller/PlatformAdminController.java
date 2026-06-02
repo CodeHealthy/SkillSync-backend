@@ -2,7 +2,11 @@ package app.SkillSync.controller;
 
 import app.SkillSync.dto.AuditLogResponse;
 import app.SkillSync.dto.PlatformAdminSummaryResponse;
+import app.SkillSync.dto.PlatformOrganizationResponse;
+import app.SkillSync.dto.PlatformOrganizationUpdateRequest;
 import app.SkillSync.dto.PlatformSubscriptionPlanRequest;
+import app.SkillSync.dto.PlatformUserResponse;
+import app.SkillSync.dto.PlatformUserUpdateRequest;
 import app.SkillSync.dto.SubscriptionPlanResponse;
 import app.SkillSync.service.AuditLogService;
 import app.SkillSync.service.PlatformAdminService;
@@ -48,10 +52,19 @@ public class PlatformAdminController {
     @PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<List<AuditLogResponse>> listPlatformLogs(
             Authentication authentication,
-            @RequestParam(required = false) String action
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String organizationId,
+            @RequestParam(required = false) String actorEmail,
+            @RequestParam(required = false) String targetType
     ) {
         return ResponseEntity.ok(
-                auditLogService.listPlatformLogs(authentication, action)
+                auditLogService.listPlatformLogs(
+                        authentication,
+                        action,
+                        organizationId,
+                        actorEmail,
+                        targetType
+                )
         );
     }
 
@@ -89,5 +102,27 @@ public class PlatformAdminController {
             @PathVariable String planId
     ) {
         return ResponseEntity.ok(platformAdminService.deactivateSubscriptionPlan(authentication, planId));
+    }
+
+    @PatchMapping("/organizations/{organizationId}")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<PlatformOrganizationResponse> updateOrganization(
+            Authentication authentication,
+            @PathVariable String organizationId,
+            @Valid @RequestBody PlatformOrganizationUpdateRequest request
+    ) {
+        return ResponseEntity.ok(
+                platformAdminService.updateOrganization(authentication, organizationId, request)
+        );
+    }
+
+    @PatchMapping("/users/{userId}")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<PlatformUserResponse> updateUser(
+            Authentication authentication,
+            @PathVariable String userId,
+            @RequestBody PlatformUserUpdateRequest request
+    ) {
+        return ResponseEntity.ok(platformAdminService.updateUser(authentication, userId, request));
     }
 }

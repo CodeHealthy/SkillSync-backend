@@ -13,6 +13,8 @@ public class Organization {
 
     private String name;
 
+    private OrganizationStatus status = OrganizationStatus.ACTIVE;
+
     private Instant createdAt = Instant.now();
 
     public String getId() {
@@ -27,12 +29,20 @@ public class Organization {
         return createdAt;
     }
 
+    public OrganizationStatus getStatus() {
+        return status == null ? OrganizationStatus.ACTIVE : status;
+    }
+
     public void setId(String id) {
         this.id = id;
     }
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public void setStatus(OrganizationStatus status) {
+        this.status = status == null ? OrganizationStatus.ACTIVE : status;
     }
 
     public void setCreatedAt(Instant createdAt) {

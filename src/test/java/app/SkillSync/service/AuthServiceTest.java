@@ -41,6 +41,7 @@ class AuthServiceTest {
     private EmailTokenService emailTokenService;
     private MailService mailService;
     private AuditLogService auditLogService;
+    private OrganizationAccessService organizationAccessService;
     private AuthService authService;
 
     @BeforeEach
@@ -54,6 +55,7 @@ class AuthServiceTest {
         emailTokenService = mock(EmailTokenService.class);
         mailService = mock(MailService.class);
         auditLogService = mock(AuditLogService.class);
+        organizationAccessService = mock(OrganizationAccessService.class);
 
         authService = new AuthService(
                 userRepository,
@@ -64,7 +66,8 @@ class AuthServiceTest {
                 organizationRepository,
                 emailTokenService,
                 mailService,
-                auditLogService
+                auditLogService,
+                organizationAccessService
         );
 
         ReflectionTestUtils.setField(
@@ -291,8 +294,8 @@ class AuthServiceTest {
         )).thenReturn(token);
         when(candidateRepository.findById("candidate-profile-1"))
                 .thenReturn(Optional.of(candidate));
-        when(organizationRepository.findById("org-1"))
-                .thenReturn(Optional.of(organization));
+        when(organizationAccessService.requireActiveOrganization("org-1"))
+                .thenReturn(organization);
 
         CandidateInvitePreviewResponse response =
                 authService.getCandidateInvite("raw-invite-token");
