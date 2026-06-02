@@ -4,7 +4,9 @@ import app.SkillSync.security.JwtAuthenticationFilter;
 import app.SkillSync.security.CsrfCookieFilter;
 import app.SkillSync.security.OAuth2LoginFailureHandler;
 import app.SkillSync.security.OAuth2LoginSuccessHandler;
+import app.SkillSync.security.OAuthInviteContextFilter;
 import app.SkillSync.service.CustomUserDetailsService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -18,6 +20,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -32,7 +35,14 @@ public class SecurityConfig {
     private final CustomUserDetailsService customUserDetailsService;
     private final OAuth2LoginSuccessHandler oAuth2LoginSuccessHandler;
     private final OAuth2LoginFailureHandler oAuth2LoginFailureHandler;
+    private final OAuthInviteContextFilter oAuthInviteContextFilter;
     private final PasswordEncoder passwordEncoder;
+
+    @Value("${app.auth.cookie.secure:false}")
+    private boolean secureCookie;
+
+    @Value("${app.auth.cookie.same-site:Lax}")
+    private String sameSite;
 
     public SecurityConfig(
             JwtAuthenticationFilter jwtAuthenticationFilter,
@@ -40,6 +50,7 @@ public class SecurityConfig {
             CustomUserDetailsService customUserDetailsService,
             OAuth2LoginSuccessHandler oAuth2LoginSuccessHandler,
             OAuth2LoginFailureHandler oAuth2LoginFailureHandler,
+            OAuthInviteContextFilter oAuthInviteContextFilter,
             PasswordEncoder passwordEncoder
     ) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
@@ -47,6 +58,7 @@ public class SecurityConfig {
         this.customUserDetailsService = customUserDetailsService;
         this.oAuth2LoginSuccessHandler = oAuth2LoginSuccessHandler;
         this.oAuth2LoginFailureHandler = oAuth2LoginFailureHandler;
+        this.oAuthInviteContextFilter = oAuthInviteContextFilter;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -58,6 +70,11 @@ public class SecurityConfig {
         csrfTokenRepository.setCookieName("XSRF-TOKEN");
         csrfTokenRepository.setHeaderName("X-XSRF-TOKEN");
         csrfTokenRepository.setCookiePath("/");
+        csrfTokenRepository.setCookieCustomizer(cookie -> cookie
+                .secure(secureCookie)
+                .sameSite(sameSite)
+                .path("/")
+        );
 
         return http
                 .cors(Customizer.withDefaults())
@@ -87,6 +104,10 @@ public class SecurityConfig {
                 )
                 .authenticationProvider(authenticationProvider())
                 .addFilterAfter(csrfCookieFilter, BasicAuthenticationFilter.class)
+                .addFilterBefore(
+                        oAuthInviteContextFilter,
+                        OAuth2AuthorizationRequestRedirectFilter.class
+                )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }

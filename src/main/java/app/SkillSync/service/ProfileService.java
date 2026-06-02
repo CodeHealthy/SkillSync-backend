@@ -80,7 +80,16 @@ public class ProfileService {
                 user.getId(),
                 user.getFullName(),
                 user.getEmail(),
-                user.getRole()
+                user.getRole(),
+                user.getOrganizationId(),
+                requiresOrganizationSetup(user)
         );
+    }
+
+    private boolean requiresOrganizationSetup(User user) {
+        return user != null
+                && user.getRole() != null
+                && user.getRole().isOrganizationAdmin()
+                && (user.getOrganizationId() == null || user.getOrganizationId().isBlank());
     }
 }

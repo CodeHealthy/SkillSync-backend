@@ -8,6 +8,7 @@ import app.SkillSync.dto.TeamInvitePreviewResponse;
 import app.SkillSync.dto.ForgotPasswordRequest;
 import app.SkillSync.dto.LoginRequest;
 import app.SkillSync.dto.OAuthExchangeRequest;
+import app.SkillSync.dto.OrganizationSetupRequest;
 import app.SkillSync.dto.RegisterRequest;
 import app.SkillSync.dto.ResendVerificationRequest;
 import app.SkillSync.dto.ResetPasswordRequest;
@@ -25,6 +26,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -103,10 +105,11 @@ public class AuthService {
         user.setActive(true);
 
         if (role.isOrganizationAdmin()) {
-            String organizationName = normalizeRequiredText(
+            String organizationName = normalizeOrganizationName(
                     request.getOrganizationName(),
                     "Organization name is required for admin registration."
             );
+            enforceOrganizationNameAvailable(organizationName);
 
             Organization organization = new Organization();
             organization.setName(organizationName);
@@ -177,7 +180,9 @@ public class AuthService {
         }
 
         try {
-            organizationAccessService.requireActiveOrganizationForUser(user);
+            if (!requiresOrganizationSetup(user)) {
+                organizationAccessService.requireActiveOrganizationForUser(user);
+            }
         } catch (IllegalArgumentException exception) {
             auditLogService.record(
                     user,
@@ -274,7 +279,9 @@ public class AuthService {
             throw new IllegalArgumentException("This account has been deactivated.");
         }
 
-        organizationAccessService.requireActiveOrganizationForUser(user);
+        if (!requiresOrganizationSetup(user)) {
+            organizationAccessService.requireActiveOrganizationForUser(user);
+        }
 
         emailTokenService.markUsed(token);
 
@@ -287,6 +294,54 @@ public class AuthService {
         );
 
         return buildAuthResponse(user);
+    }
+
+    public AuthResponse completeOrganizationSetup(
+            Authentication authentication,
+            OrganizationSetupRequest request
+    ) {
+        User user = getCurrentUser(authentication);
+
+        if (!user.isEmailVerifiedForLogin()) {
+            throw new IllegalArgumentException("Please verify your email before continuing.");
+        }
+
+        if (!user.isActiveForLogin()) {
+            throw new IllegalArgumentException("This account has been deactivated.");
+        }
+
+        if (user.getRole() == null || !user.getRole().isOrganizationAdmin()) {
+            throw new IllegalArgumentException("Only organization admins can set up an organization.");
+        }
+
+        if (user.getOrganizationId() != null && !user.getOrganizationId().isBlank()) {
+            throw new IllegalArgumentException("Organization is already set up for this account.");
+        }
+
+        String organizationName = normalizeOrganizationName(
+                request.getOrganizationName(),
+                "Organization name is required."
+        );
+        enforceOrganizationNameAvailable(organizationName);
+
+        Organization organization = new Organization();
+        organization.setName(organizationName);
+        organization.setCreatedAt(Instant.now());
+        Organization savedOrganization = organizationRepository.save(organization);
+
+        user.setOrganizationId(savedOrganization.getId());
+        User savedUser = userRepository.save(user);
+
+        auditLogService.recordForOrganization(
+                savedUser,
+                savedOrganization.getId(),
+                "ORG_SETUP_COMPLETED",
+                "ORGANIZATION",
+                savedOrganization.getId(),
+                Map.of("email", savedUser.getEmail())
+        );
+
+        return buildAuthResponse(savedUser);
     }
 
     public CandidateInvitePreviewResponse getCandidateInvite(String rawToken) {
@@ -501,8 +556,19 @@ public class AuthService {
                 user.getId(),
                 user.getFullName(),
                 user.getEmail(),
-                user.getRole()
+                user.getRole(),
+                user.getOrganizationId(),
+                requiresOrganizationSetup(user)
         );
+    }
+
+    private User getCurrentUser(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            throw new IllegalArgumentException("Authenticated user is required.");
+        }
+
+        return userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new IllegalArgumentException("Authenticated user not found."));
     }
 
     private String normalizeEmail(String email) {
@@ -519,6 +585,33 @@ public class AuthService {
         }
 
         return value.trim();
+    }
+
+    private String normalizeOrganizationName(String value, String message) {
+        String organizationName = normalizeRequiredText(value, message)
+                .replaceAll("\\s+", " ");
+
+        if (organizationName.length() > 120) {
+            throw new IllegalArgumentException("Organization name must be 120 characters or fewer.");
+        }
+
+        return organizationName;
+    }
+
+    private void enforceOrganizationNameAvailable(String organizationName) {
+        organizationRepository.findFirstByNameIgnoreCase(organizationName)
+                .ifPresent(existingOrganization -> {
+                    throw new IllegalArgumentException(
+                            "Organization name is already in use. Contact your organization admin or choose a distinct organization name."
+                    );
+                });
+    }
+
+    private boolean requiresOrganizationSetup(User user) {
+        return user != null
+                && user.getRole() != null
+                && user.getRole().isOrganizationAdmin()
+                && (user.getOrganizationId() == null || user.getOrganizationId().isBlank());
     }
 
     private String normalizeOptionalText(String value) {

@@ -8,6 +8,7 @@ import app.SkillSync.dto.TeamInvitePreviewResponse;
 import app.SkillSync.dto.ForgotPasswordRequest;
 import app.SkillSync.dto.LoginRequest;
 import app.SkillSync.dto.OAuthExchangeRequest;
+import app.SkillSync.dto.OrganizationSetupRequest;
 import app.SkillSync.dto.RegisterRequest;
 import app.SkillSync.dto.ResendVerificationRequest;
 import app.SkillSync.dto.ResetPasswordRequest;
@@ -23,6 +24,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -37,6 +40,9 @@ public class AuthController {
 
     @Value("${app.auth.cookie.secure:false}")
     private boolean secureCookie;
+
+    @Value("${app.auth.cookie.same-site:Lax}")
+    private String sameSite;
 
     public AuthController(
             AuthService authService,
@@ -144,6 +150,15 @@ public class AuthController {
         return authResponse(authService.exchangeOAuthCode(request));
     }
 
+    @PostMapping("/organization/setup")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<AuthResponse> completeOrganizationSetup(
+            Authentication authentication,
+            @Valid @RequestBody OrganizationSetupRequest request
+    ) {
+        return authResponse(authService.completeOrganizationSetup(authentication, request));
+    }
+
     @GetMapping("/invite")
     public ResponseEntity<CandidateInvitePreviewResponse> getCandidateInvite(
             @RequestParam String token
@@ -193,13 +208,16 @@ public class AuthController {
                 .from("XSRF-TOKEN", csrfToken.getToken())
                 .httpOnly(false)
                 .secure(secureCookie)
-                .sameSite("Lax")
+                .sameSite(sameSite)
                 .path("/")
                 .build();
 
         response.addHeader(HttpHeaders.SET_COOKIE, csrfCookie.toString());
 
-        return ResponseEntity.ok(Map.of("headerName", "X-XSRF-TOKEN"));
+        return ResponseEntity.ok(Map.of(
+                "headerName", "X-XSRF-TOKEN",
+                "token", csrfToken.getToken()
+        ));
     }
 
     private ResponseEntity<AuthResponse> authResponse(AuthResponse response) {

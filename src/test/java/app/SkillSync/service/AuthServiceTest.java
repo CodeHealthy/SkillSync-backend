@@ -5,6 +5,7 @@ import app.SkillSync.dto.AcceptTeamInviteRequest;
 import app.SkillSync.dto.AuthResponse;
 import app.SkillSync.dto.CandidateInvitePreviewResponse;
 import app.SkillSync.dto.OAuthExchangeRequest;
+import app.SkillSync.dto.OrganizationSetupRequest;
 import app.SkillSync.dto.RegisterRequest;
 import app.SkillSync.dto.TeamInvitePreviewResponse;
 import app.SkillSync.model.AuthTokenType;
@@ -20,6 +21,7 @@ import app.SkillSync.security.AuthCookieService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -141,6 +143,37 @@ class AuthServiceTest {
         verify(userRepository, never()).save(any());
         verify(emailTokenService, never()).createEmailVerificationToken(any(User.class));
         verify(mailService, never()).sendVerificationEmail(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void registerAdminWithExistingOrganizationNameThrowsError() {
+        RegisterRequest request = new RegisterRequest();
+        request.setFullName("Admin Demo");
+        request.setEmail("admin@skillsync.com");
+        request.setPassword("Password123!");
+        request.setRole(Role.ORG_ADMIN);
+        request.setOrganizationName("SkillSync Demo Org");
+
+        Organization existingOrganization = new Organization();
+        existingOrganization.setId("org-existing");
+        existingOrganization.setName("SkillSync Demo Org");
+
+        when(userRepository.existsByEmail("admin@skillsync.com")).thenReturn(false);
+        when(organizationRepository.findFirstByNameIgnoreCase("SkillSync Demo Org"))
+                .thenReturn(Optional.of(existingOrganization));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> authService.register(request)
+        );
+
+        assertEquals(
+                "Organization name is already in use. Contact your organization admin or choose a distinct organization name.",
+                exception.getMessage()
+        );
+
+        verify(organizationRepository, never()).save(any());
+        verify(userRepository, never()).save(any());
     }
 
     @Test
@@ -353,6 +386,80 @@ class AuthServiceTest {
 
         verify(candidateRepository).save(candidate);
         verify(emailTokenService).markUsed(token);
+    }
+
+    @Test
+    void completeOrganizationSetupCreatesOrganizationForPendingOrgAdmin() {
+        OrganizationSetupRequest request = new OrganizationSetupRequest();
+        request.setOrganizationName("  SkillSync   Labs  ");
+
+        User user = new User();
+        user.setId("user-123");
+        user.setFullName("Admin Demo");
+        user.setEmail("admin@skillsync.com");
+        user.setRole(Role.ORG_ADMIN);
+        user.setEmailVerified(true);
+        user.setActive(true);
+
+        Organization savedOrganization = new Organization();
+        savedOrganization.setId("org-123");
+        savedOrganization.setName("SkillSync Labs");
+
+        when(userRepository.findByEmail("admin@skillsync.com")).thenReturn(Optional.of(user));
+        when(organizationRepository.findFirstByNameIgnoreCase("SkillSync Labs"))
+                .thenReturn(Optional.empty());
+        when(organizationRepository.save(any(Organization.class))).thenReturn(savedOrganization);
+        when(userRepository.save(user)).thenReturn(user);
+        when(authCookieService.createToken(user)).thenReturn("jwt-token");
+
+        AuthResponse response = authService.completeOrganizationSetup(
+                new UsernamePasswordAuthenticationToken("admin@skillsync.com", null),
+                request
+        );
+
+        assertEquals("org-123", user.getOrganizationId());
+        assertEquals("org-123", response.getOrganizationId());
+        assertFalse(response.isRequiresOrganizationSetup());
+        verify(organizationRepository).save(argThat(
+                organization -> "SkillSync Labs".equals(organization.getName())
+        ));
+    }
+
+    @Test
+    void completeOrganizationSetupRejectsDuplicateOrganizationName() {
+        OrganizationSetupRequest request = new OrganizationSetupRequest();
+        request.setOrganizationName("SkillSync Labs");
+
+        User user = new User();
+        user.setId("user-123");
+        user.setEmail("admin@skillsync.com");
+        user.setRole(Role.ORG_ADMIN);
+        user.setEmailVerified(true);
+        user.setActive(true);
+
+        Organization existingOrganization = new Organization();
+        existingOrganization.setId("org-existing");
+        existingOrganization.setName("SkillSync Labs");
+
+        when(userRepository.findByEmail("admin@skillsync.com")).thenReturn(Optional.of(user));
+        when(organizationRepository.findFirstByNameIgnoreCase("SkillSync Labs"))
+                .thenReturn(Optional.of(existingOrganization));
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> authService.completeOrganizationSetup(
+                        new UsernamePasswordAuthenticationToken("admin@skillsync.com", null),
+                        request
+                )
+        );
+
+        assertEquals(
+                "Organization name is already in use. Contact your organization admin or choose a distinct organization name.",
+                exception.getMessage()
+        );
+
+        verify(organizationRepository, never()).save(any());
+        verify(userRepository, never()).save(any());
     }
 
     @Test

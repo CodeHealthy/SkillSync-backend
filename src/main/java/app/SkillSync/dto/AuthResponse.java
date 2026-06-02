@@ -10,16 +10,32 @@ public class AuthResponse {
     private String fullName;
     private String email;
     private Role role;
+    private String organizationId;
+    private boolean requiresOrganizationSetup;
 
     public AuthResponse() {
     }
 
     public AuthResponse(String token, String userId, String fullName, String email, Role role) {
+        this(token, userId, fullName, email, role, null, false);
+    }
+
+    public AuthResponse(
+            String token,
+            String userId,
+            String fullName,
+            String email,
+            Role role,
+            String organizationId,
+            boolean requiresOrganizationSetup
+    ) {
         this.token = token;
         this.userId = userId;
         this.fullName = fullName;
         this.email = email;
         this.role = role;
+        this.organizationId = organizationId;
+        this.requiresOrganizationSetup = requiresOrganizationSetup;
     }
 
     @JsonIgnore
@@ -43,6 +59,14 @@ public class AuthResponse {
         return role;
     }
 
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
+    public boolean isRequiresOrganizationSetup() {
+        return requiresOrganizationSetup;
+    }
+
     public void setToken(String token) {
         this.token = token;
     }
@@ -61,5 +85,13 @@ public class AuthResponse {
 
     public void setRole(Role role) {
         this.role = role;
+    }
+
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
+    }
+
+    public void setRequiresOrganizationSetup(boolean requiresOrganizationSetup) {
+        this.requiresOrganizationSetup = requiresOrganizationSetup;
     }
 }
