@@ -6,6 +6,7 @@ import app.SkillSync.security.OAuth2LoginFailureHandler;
 import app.SkillSync.security.OAuth2LoginSuccessHandler;
 import app.SkillSync.security.OAuthInviteContextFilter;
 import app.SkillSync.service.CustomUserDetailsService;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -88,6 +89,18 @@ public class SecurityConfig {
                 .logout(logout -> logout.disable())
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+                )
+                .exceptionHandling(exceptions -> exceptions
+                        .defaultAuthenticationEntryPointFor(
+                                (request, response, authException) ->
+                                        response.sendError(
+                                                HttpServletResponse.SC_UNAUTHORIZED,
+                                                "Authentication is required."
+                                        ),
+                                request -> request.getRequestURI().startsWith(
+                                        request.getContextPath() + "/api/"
+                                )
+                        )
                 )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()

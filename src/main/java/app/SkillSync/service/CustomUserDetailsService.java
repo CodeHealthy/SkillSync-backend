@@ -32,10 +32,12 @@ public class CustomUserDetailsService implements org.springframework.security.co
             throw new UsernameNotFoundException("User is deactivated: " + email);
         }
 
-        try {
-            organizationAccessService.requireActiveOrganizationForUser(user);
-        } catch (IllegalArgumentException exception) {
-            throw new UsernameNotFoundException(exception.getMessage(), exception);
+        if (!requiresOrganizationSetup(user)) {
+            try {
+                organizationAccessService.requireActiveOrganizationForUser(user);
+            } catch (IllegalArgumentException exception) {
+                throw new UsernameNotFoundException(exception.getMessage(), exception);
+            }
         }
 
         return new org.springframework.security.core.userdetails.User(
@@ -43,5 +45,12 @@ public class CustomUserDetailsService implements org.springframework.security.co
                 user.getPassword(),
                 List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()))
         );
+    }
+
+    private boolean requiresOrganizationSetup(User user) {
+        return user != null
+                && user.getRole() != null
+                && user.getRole().isOrganizationAdmin()
+                && (user.getOrganizationId() == null || user.getOrganizationId().isBlank());
     }
 }
