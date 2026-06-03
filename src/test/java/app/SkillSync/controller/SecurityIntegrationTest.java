@@ -107,6 +107,16 @@ class SecurityIntegrationTest {
     }
 
     @Test
+    void logout_expiresAuthCsrfAndSessionCookies() throws Exception {
+        mockMvc.perform(post("/api/auth/logout")
+                        .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(cookie().maxAge("skillsync_auth", 0))
+                .andExpect(cookie().maxAge("XSRF-TOKEN", 0))
+                .andExpect(cookie().maxAge("JSESSIONID", 0));
+    }
+
+    @Test
     @WithMockUser(roles = "ADMIN")
     void createAssessment_withoutCsrf_isForbiddenBeforeControllerServiceRuns() throws Exception {
         mockMvc.perform(post("/api/assessments")

@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 public class AuthCookieService {
 
     public static final String AUTH_COOKIE_NAME = "skillsync_auth";
+    public static final String CSRF_COOKIE_NAME = "XSRF-TOKEN";
+    public static final String SESSION_COOKIE_NAME = "JSESSIONID";
 
     private final JwtService jwtService;
 
@@ -38,7 +40,14 @@ public class AuthCookieService {
     }
 
     public String createClearCookie() {
-        return baseCookie("")
+        return baseCookie(AUTH_COOKIE_NAME, "", true)
+                .maxAge(0)
+                .build()
+                .toString();
+    }
+
+    public String createClearCookie(String cookieName, boolean httpOnly) {
+        return baseCookie(cookieName, "", httpOnly)
                 .maxAge(0)
                 .build()
                 .toString();
@@ -53,12 +62,22 @@ public class AuthCookieService {
     public HttpHeaders clearCookieHeaders() {
         HttpHeaders headers = new HttpHeaders();
         headers.add(HttpHeaders.SET_COOKIE, createClearCookie());
+        headers.add(HttpHeaders.SET_COOKIE, createClearCookie(CSRF_COOKIE_NAME, false));
+        headers.add(HttpHeaders.SET_COOKIE, createClearCookie(SESSION_COOKIE_NAME, true));
         return headers;
     }
 
     private ResponseCookie.ResponseCookieBuilder baseCookie(String value) {
-        return ResponseCookie.from(AUTH_COOKIE_NAME, value)
-                .httpOnly(true)
+        return baseCookie(AUTH_COOKIE_NAME, value, true);
+    }
+
+    private ResponseCookie.ResponseCookieBuilder baseCookie(
+            String cookieName,
+            String value,
+            boolean httpOnly
+    ) {
+        return ResponseCookie.from(cookieName, value)
+                .httpOnly(httpOnly)
                 .secure(secureCookie)
                 .sameSite(sameSite)
                 .path("/");

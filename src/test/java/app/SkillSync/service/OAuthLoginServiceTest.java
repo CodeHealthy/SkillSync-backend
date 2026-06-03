@@ -7,6 +7,7 @@ import app.SkillSync.model.Organization;
 import app.SkillSync.model.Role;
 import app.SkillSync.model.User;
 import app.SkillSync.repository.CandidateRepository;
+import app.SkillSync.repository.EmailTokenRepository;
 import app.SkillSync.repository.UserRepository;
 import app.SkillSync.security.JwtService;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,6 +34,7 @@ class OAuthLoginServiceTest {
 
     private UserRepository userRepository;
     private CandidateRepository candidateRepository;
+    private EmailTokenRepository emailTokenRepository;
     private OrganizationAccessService organizationAccessService;
     private PasswordEncoder passwordEncoder;
     private EmailTokenService emailTokenService;
@@ -41,6 +44,7 @@ class OAuthLoginServiceTest {
     void setUp() {
         userRepository = mock(UserRepository.class);
         candidateRepository = mock(CandidateRepository.class);
+        emailTokenRepository = mock(EmailTokenRepository.class);
         organizationAccessService = mock(OrganizationAccessService.class);
         passwordEncoder = mock(PasswordEncoder.class);
         JwtService jwtService = mock(JwtService.class);
@@ -56,6 +60,7 @@ class OAuthLoginServiceTest {
         oAuthLoginService = new OAuthLoginService(
                 userRepository,
                 candidateRepository,
+                emailTokenRepository,
                 organizationAccessService,
                 passwordEncoder,
                 jwtService,
@@ -66,6 +71,14 @@ class OAuthLoginServiceTest {
     @Test
     void publicGoogleSignupCreatesRecruiterSideOrganizationAdminPendingSetup() {
         when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.empty());
+        when(emailTokenRepository.findByEmailAndTypeOrderByCreatedAtDesc(
+                "owner@example.com",
+                AuthTokenType.CANDIDATE_INVITE
+        )).thenReturn(List.of());
+        when(emailTokenRepository.findByEmailAndTypeOrderByCreatedAtDesc(
+                "owner@example.com",
+                AuthTokenType.TEAM_MEMBER_INVITE
+        )).thenReturn(List.of());
 
         User user = oAuthLoginService.processGoogleLogin(
                 googleUser("owner@example.com", "Owner User"),
@@ -76,6 +89,124 @@ class OAuthLoginServiceTest {
         assertEquals(Role.ORG_ADMIN, user.getRole());
         assertNull(user.getOrganizationId());
         assertEquals("owner@example.com", user.getEmail());
+    }
+
+    @Test
+    void publicGoogleSignupUsesPendingCandidateInviteBeforeOrganizationSetup() {
+        Candidate candidate = candidate("candidate-1", "org-1", "candidate@example.com");
+        EmailToken token = candidateInviteToken("candidate-1", "candidate@example.com");
+
+        when(emailTokenRepository.findByEmailAndTypeOrderByCreatedAtDesc(
+                "candidate@example.com",
+                AuthTokenType.CANDIDATE_INVITE
+        )).thenReturn(List.of(token));
+        when(candidateRepository.findById("candidate-1")).thenReturn(Optional.of(candidate));
+        when(organizationAccessService.requireActiveOrganization("org-1"))
+                .thenReturn(organization("org-1"));
+        when(userRepository.findByEmail("candidate@example.com")).thenReturn(Optional.empty());
+
+        User user = oAuthLoginService.processGoogleLogin(
+                googleUser("candidate@example.com", "Candidate User"),
+                "public",
+                null
+        );
+
+        assertEquals(Role.CANDIDATE, user.getRole());
+        assertNull(user.getOrganizationId());
+        assertEquals("user-1", candidate.getUserId());
+        verify(emailTokenService).markUsed(token);
+    }
+
+    @Test
+    void publicGoogleSignupUsesPendingTeamInviteBeforeOrganizationSetup() {
+        EmailToken token = teamInviteToken(
+                "org-1",
+                "reviewer@example.com",
+                Role.EVALUATOR
+        );
+
+        when(emailTokenRepository.findByEmailAndTypeOrderByCreatedAtDesc(
+                "reviewer@example.com",
+                AuthTokenType.CANDIDATE_INVITE
+        )).thenReturn(List.of());
+        when(emailTokenRepository.findByEmailAndTypeOrderByCreatedAtDesc(
+                "reviewer@example.com",
+                AuthTokenType.TEAM_MEMBER_INVITE
+        )).thenReturn(List.of(token));
+        when(organizationAccessService.requireActiveOrganization("org-1"))
+                .thenReturn(organization("org-1"));
+        when(userRepository.findByEmail("reviewer@example.com")).thenReturn(Optional.empty());
+
+        User user = oAuthLoginService.processGoogleLogin(
+                googleUser("reviewer@example.com", "Reviewer User"),
+                "public",
+                null
+        );
+
+        assertEquals(Role.EVALUATOR, user.getRole());
+        assertEquals("org-1", user.getOrganizationId());
+        verify(emailTokenService).markUsed(token);
+    }
+
+    @Test
+    void candidateInviteConvertsPendingOrganizationAdminIntoCandidate() {
+        Candidate candidate = candidate("candidate-1", "org-1", "candidate@example.com");
+        EmailToken token = candidateInviteToken("candidate-1", "candidate@example.com");
+        User pendingOrganizationAdmin = user(
+                "candidate@example.com",
+                Role.ORG_ADMIN,
+                null
+        );
+
+        when(emailTokenService.validateToken("candidate-token", AuthTokenType.CANDIDATE_INVITE))
+                .thenReturn(token);
+        when(candidateRepository.findById("candidate-1")).thenReturn(Optional.of(candidate));
+        when(organizationAccessService.requireActiveOrganization("org-1"))
+                .thenReturn(organization("org-1"));
+        when(userRepository.findByEmail("candidate@example.com"))
+                .thenReturn(Optional.of(pendingOrganizationAdmin));
+
+        User user = oAuthLoginService.processGoogleLogin(
+                googleUser("candidate@example.com", "Candidate User"),
+                "candidate-invite",
+                "candidate-token"
+        );
+
+        assertEquals(Role.CANDIDATE, user.getRole());
+        assertNull(user.getOrganizationId());
+        assertEquals("user-1", candidate.getUserId());
+        verify(emailTokenService).markUsed(token);
+    }
+
+    @Test
+    void teamInviteConvertsPendingOrganizationAdminIntoInvitedTeamRole() {
+        EmailToken token = teamInviteToken(
+                "org-1",
+                "reviewer@example.com",
+                Role.EVALUATOR
+        );
+        User pendingOrganizationAdmin = user(
+                "reviewer@example.com",
+                Role.ORG_ADMIN,
+                null
+        );
+
+        when(emailTokenService.validateToken("team-token", AuthTokenType.TEAM_MEMBER_INVITE))
+                .thenReturn(token);
+        when(organizationAccessService.requireActiveOrganization("org-1"))
+                .thenReturn(organization("org-1"));
+        when(userRepository.findByEmail("reviewer@example.com"))
+                .thenReturn(Optional.of(pendingOrganizationAdmin));
+
+        User user = oAuthLoginService.processGoogleLogin(
+                googleUser("reviewer@example.com", "Reviewer User"),
+                "team-invite",
+                "team-token"
+        );
+
+        assertEquals(Role.EVALUATOR, user.getRole());
+        assertEquals("org-1", user.getOrganizationId());
+        verify(emailTokenService).markUsed(token);
     }
 
     @Test
@@ -155,11 +286,23 @@ class OAuthLoginServiceTest {
         return organization;
     }
 
+    private User user(String email, Role role, String organizationId) {
+        User user = new User();
+        user.setId("user-1");
+        user.setEmail(email);
+        user.setFullName("Existing User");
+        user.setRole(role);
+        user.setOrganizationId(organizationId);
+        user.setEmailVerified(true);
+        return user;
+    }
+
     private EmailToken candidateInviteToken(String candidateId, String email) {
         EmailToken token = new EmailToken();
         token.setCandidateId(candidateId);
         token.setEmail(email);
         token.setType(AuthTokenType.CANDIDATE_INVITE);
+        token.setExpiresAt(Instant.now().plusSeconds(3600));
         return token;
     }
 
@@ -169,6 +312,7 @@ class OAuthLoginServiceTest {
         token.setEmail(email);
         token.setInvitedRole(role);
         token.setType(AuthTokenType.TEAM_MEMBER_INVITE);
+        token.setExpiresAt(Instant.now().plusSeconds(3600));
         return token;
     }
 }

@@ -7,6 +7,7 @@ import app.SkillSync.model.Organization;
 import app.SkillSync.model.Role;
 import app.SkillSync.model.User;
 import app.SkillSync.repository.CandidateRepository;
+import app.SkillSync.repository.EmailTokenRepository;
 import app.SkillSync.repository.UserRepository;
 import app.SkillSync.security.JwtService;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -21,6 +22,7 @@ public class OAuthLoginService {
 
     private final UserRepository userRepository;
     private final CandidateRepository candidateRepository;
+    private final EmailTokenRepository emailTokenRepository;
     private final OrganizationAccessService organizationAccessService;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
@@ -29,6 +31,7 @@ public class OAuthLoginService {
     public OAuthLoginService(
             UserRepository userRepository,
             CandidateRepository candidateRepository,
+            EmailTokenRepository emailTokenRepository,
             OrganizationAccessService organizationAccessService,
             PasswordEncoder passwordEncoder,
             JwtService jwtService,
@@ -36,6 +39,7 @@ public class OAuthLoginService {
     ) {
         this.userRepository = userRepository;
         this.candidateRepository = candidateRepository;
+        this.emailTokenRepository = emailTokenRepository;
         this.organizationAccessService = organizationAccessService;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
@@ -71,6 +75,16 @@ public class OAuthLoginService {
                     fullName,
                     googleEmailVerified
             );
+        }
+
+        User inviteUser = processPendingInviteLoginIfPresent(
+                email,
+                fullName,
+                googleEmailVerified
+        );
+
+        if (inviteUser != null) {
+            return inviteUser;
         }
 
         User user = userRepository.findByEmail(email)
@@ -248,6 +262,42 @@ public class OAuthLoginService {
         return user;
     }
 
+    private User processCandidateInviteLogin(
+            EmailToken token,
+            String googleEmail,
+            String fullName,
+            boolean googleEmailVerified
+    ) {
+        Candidate candidate = candidateRepository.findById(token.getCandidateId())
+                .orElseThrow(() -> new IllegalArgumentException("Candidate invite is no longer valid."));
+        organizationAccessService.requireActiveOrganization(candidate.getOrganizationId());
+
+        if (!normalizeEmail(candidate.getEmail()).equals(googleEmail)) {
+            throw new IllegalArgumentException(
+                    "Google account email must match the candidate invite email."
+            );
+        }
+
+        if (candidate.getUserId() != null && !candidate.getUserId().isBlank()) {
+            throw new IllegalArgumentException("Candidate invite has already been accepted.");
+        }
+
+        User user = userRepository.findByEmail(googleEmail)
+                .map(existingUser ->
+                        processExistingCandidateInviteUser(
+                                existingUser,
+                                fullName,
+                                googleEmailVerified
+                        )
+                )
+                .orElseGet(() -> createCandidateUser(googleEmail, fullName, googleEmailVerified));
+
+        linkCandidateProfile(user, candidate);
+        emailTokenService.markUsed(token);
+
+        return user;
+    }
+
     private User processTeamInviteLogin(
             String rawToken,
             String googleEmail,
@@ -295,11 +345,107 @@ public class OAuthLoginService {
         return user;
     }
 
+    private User processTeamInviteLogin(
+            EmailToken token,
+            String googleEmail,
+            String fullName,
+            boolean googleEmailVerified
+    ) {
+        Organization organization =
+                organizationAccessService.requireActiveOrganization(token.getOrganizationId());
+        Role invitedRole = token.getInvitedRole() == null
+                ? Role.RECRUITER
+                : token.getInvitedRole();
+
+        if (!normalizeEmail(token.getEmail()).equals(googleEmail)) {
+            throw new IllegalArgumentException(
+                    "Google account email must match the team invite email."
+            );
+        }
+
+        User user = userRepository.findByEmail(googleEmail)
+                .map(existingUser ->
+                        processExistingTeamInviteUser(
+                                existingUser,
+                                fullName,
+                                googleEmailVerified,
+                                invitedRole,
+                                organization.getId()
+                        )
+                )
+                .orElseGet(() ->
+                        createOrganizationStaffUser(
+                                googleEmail,
+                                fullName,
+                                invitedRole,
+                                organization.getId(),
+                                googleEmailVerified
+                        )
+                );
+
+        emailTokenService.markUsed(token);
+
+        return user;
+    }
+
+    private User processPendingInviteLoginIfPresent(
+            String googleEmail,
+            String fullName,
+            boolean googleEmailVerified
+    ) {
+        EmailToken candidateInvite = findUsableInviteToken(
+                googleEmail,
+                AuthTokenType.CANDIDATE_INVITE
+        );
+
+        if (candidateInvite != null) {
+            return processCandidateInviteLogin(
+                    candidateInvite,
+                    googleEmail,
+                    fullName,
+                    googleEmailVerified
+            );
+        }
+
+        EmailToken teamInvite = findUsableInviteToken(
+                googleEmail,
+                AuthTokenType.TEAM_MEMBER_INVITE
+        );
+
+        if (teamInvite != null) {
+            return processTeamInviteLogin(
+                    teamInvite,
+                    googleEmail,
+                    fullName,
+                    googleEmailVerified
+            );
+        }
+
+        return null;
+    }
+
+    private EmailToken findUsableInviteToken(String email, AuthTokenType type) {
+        return emailTokenRepository
+                .findByEmailAndTypeOrderByCreatedAtDesc(email, type)
+                .stream()
+                .filter(token -> token.getUsedAt() == null)
+                .filter(token -> token.getExpiresAt() != null)
+                .filter(token -> token.getExpiresAt().isAfter(Instant.now()))
+                .findFirst()
+                .orElse(null);
+    }
+
     private User processExistingCandidateInviteUser(
             User user,
             String fullName,
             boolean googleEmailVerified
     ) {
+        if (isPendingPublicGoogleOrganizationAdmin(user)) {
+            user.setRole(Role.CANDIDATE);
+            user.setOrganizationId(null);
+            return processExistingUser(user, fullName, googleEmailVerified);
+        }
+
         if (user.getRole() != Role.CANDIDATE) {
             throw new IllegalArgumentException(
                     "An existing non-candidate account cannot accept this candidate invite."
@@ -316,6 +462,12 @@ public class OAuthLoginService {
             Role invitedRole,
             String organizationId
     ) {
+        if (isPendingPublicGoogleOrganizationAdmin(user)) {
+            user.setRole(invitedRole);
+            user.setOrganizationId(organizationId);
+            return processExistingUser(user, fullName, googleEmailVerified);
+        }
+
         if (user.getRole() != invitedRole
                 || user.getOrganizationId() == null
                 || !user.getOrganizationId().equals(organizationId)) {
@@ -325,6 +477,13 @@ public class OAuthLoginService {
         }
 
         return processExistingUser(user, fullName, googleEmailVerified);
+    }
+
+    private boolean isPendingPublicGoogleOrganizationAdmin(User user) {
+        return user != null
+                && user.getRole() != null
+                && user.getRole().isOrganizationAdmin()
+                && (user.getOrganizationId() == null || user.getOrganizationId().isBlank());
     }
 
     private void requireVerifiedGoogleEmail(boolean googleEmailVerified) {

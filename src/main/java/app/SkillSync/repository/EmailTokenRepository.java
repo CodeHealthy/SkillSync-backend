@@ -16,6 +16,11 @@ public interface EmailTokenRepository extends MongoRepository<EmailToken, String
             AuthTokenType type
     );
 
+    List<EmailToken> findByEmailAndTypeOrderByCreatedAtDesc(
+            String email,
+            AuthTokenType type
+    );
+
     List<EmailToken> findByOrganizationIdAndTypeOrderByCreatedAtDesc(
             String organizationId,
             AuthTokenType type

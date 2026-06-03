@@ -36,7 +36,9 @@ public class OAuthInviteContextFilter extends OncePerRequestFilter {
     }
 
     private boolean isGoogleAuthorizationRequest(HttpServletRequest request) {
-        return "/oauth2/authorization/google".equals(request.getRequestURI());
+        String requestUri = request.getRequestURI();
+
+        return requestUri != null && requestUri.endsWith("/oauth2/authorization/google");
     }
 
     private void captureOAuthContext(HttpServletRequest request) {
