@@ -12,6 +12,7 @@ public class Organization {
     private String id;
 
     private String name;
+    private String logoUrl;
 
     private OrganizationStatus status = OrganizationStatus.ACTIVE;
 
@@ -23,6 +24,10 @@ public class Organization {
 
     public String getName() {
         return name;
+    }
+
+    public String getLogoUrl() {
+        return logoUrl;
     }
 
     public Instant getCreatedAt() {
@@ -39,6 +44,10 @@ public class Organization {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public void setLogoUrl(String logoUrl) {
+        this.logoUrl = logoUrl;
     }
 
     public void setStatus(OrganizationStatus status) {

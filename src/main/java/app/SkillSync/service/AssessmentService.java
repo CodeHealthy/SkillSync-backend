@@ -258,9 +258,10 @@ public class AssessmentService {
             throw new RuntimeException("Admin is not linked to an organization.");
         }
 
-        String organizationName = organizationRepository.findById(organizationId)
-                .map(Organization::getName)
-                .orElse("Organization");
+        Organization organization = organizationRepository.findById(organizationId)
+                .orElse(null);
+        String organizationName = organization == null ? "Organization" : organization.getName();
+        String organizationLogoUrl = organization == null ? null : organization.getLogoUrl();
 
         if (!organizationId.equals(candidate.getOrganizationId())) {
             throw new RuntimeException("Candidate does not belong to your organization.");
@@ -313,6 +314,7 @@ public class AssessmentService {
         assignment.setTimeLimitMinutes(request.getTimeLimitMinutes());
         assignment.setOrganizationId(organizationId);
         assignment.setOrganizationName(organizationName);
+        assignment.setOrganizationLogoUrl(organizationLogoUrl);
 
         AssessmentAssignment savedAssignment = assignmentRepository.save(assignment);
         auditLogService.record(
@@ -1017,8 +1019,28 @@ public class AssessmentService {
         target.setMaxScore(source.getMaxScore());
         target.setOrganizationId(source.getOrganizationId());
         target.setOrganizationName(source.getOrganizationName());
+        target.setOrganizationLogoUrl(resolveOrganizationLogoUrl(source));
 
         return target;
+    }
+
+    private String resolveOrganizationLogoUrl(AssessmentAssignment assignment) {
+        if (assignment == null) {
+            return null;
+        }
+
+        if (assignment.getOrganizationLogoUrl() != null
+                && !assignment.getOrganizationLogoUrl().isBlank()) {
+            return assignment.getOrganizationLogoUrl();
+        }
+
+        if (assignment.getOrganizationId() == null || assignment.getOrganizationId().isBlank()) {
+            return null;
+        }
+
+        return organizationRepository.findById(assignment.getOrganizationId())
+                .map(Organization::getLogoUrl)
+                .orElse(null);
     }
 
     private AssessmentAssignment toAdminSafeAssignment(AssessmentAssignment assignment) {

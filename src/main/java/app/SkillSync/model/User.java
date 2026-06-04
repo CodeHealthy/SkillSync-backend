@@ -23,6 +23,7 @@ public class User {
 
     private Instant createdAt;
     private String organizationId;
+    private String profileImageUrl;
 
     private Boolean emailVerified;
     private Instant emailVerifiedAt;
@@ -66,6 +67,10 @@ public class User {
 
     public String getOrganizationId() {
         return organizationId;
+    }
+
+    public String getProfileImageUrl() {
+        return profileImageUrl;
     }
 
     public Boolean getEmailVerified() {
@@ -118,6 +123,10 @@ public class User {
 
     public void setOrganizationId(String organizationId) {
         this.organizationId = organizationId;
+    }
+
+    public void setProfileImageUrl(String profileImageUrl) {
+        this.profileImageUrl = profileImageUrl;
     }
 
     public void setEmailVerified(Boolean emailVerified) {

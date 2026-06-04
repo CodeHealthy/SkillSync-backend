@@ -83,6 +83,7 @@ public class AssessmentAssignment {
     @Indexed
     private String organizationId;
     private String organizationName;
+    private String organizationLogoUrl;
 
     public AssessmentAssignment() {
     }
@@ -291,6 +292,10 @@ public class AssessmentAssignment {
         return organizationName;
     }
 
+    public String getOrganizationLogoUrl() {
+        return organizationLogoUrl;
+    }
+
     public void setId(String id) {
         this.id = id;
     }
@@ -493,5 +498,9 @@ public class AssessmentAssignment {
 
     public void setOrganizationName(String organizationName) {
         this.organizationName = organizationName;
+    }
+
+    public void setOrganizationLogoUrl(String organizationLogoUrl) {
+        this.organizationLogoUrl = organizationLogoUrl;
     }
 }

@@ -8,6 +8,7 @@ import app.SkillSync.model.AssignmentStatus;
 import app.SkillSync.model.Candidate;
 import app.SkillSync.repository.AssessmentAssignmentRepository;
 import app.SkillSync.repository.AssessmentRepository;
+import app.SkillSync.repository.AssessmentTemplateRepository;
 import app.SkillSync.repository.AuditLogRepository;
 import app.SkillSync.repository.BillingSubscriptionRepository;
 import app.SkillSync.repository.CandidateRepository;
@@ -66,6 +67,9 @@ class SecurityIntegrationTest {
 
     @MockitoBean
     private AssessmentRepository assessmentRepository;
+
+    @MockitoBean
+    private AssessmentTemplateRepository assessmentTemplateRepository;
 
     @MockitoBean
     private AuditLogRepository auditLogRepository;

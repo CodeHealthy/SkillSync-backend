@@ -21,6 +21,9 @@ public class AcceptCandidateInviteRequest {
     )
     private String password;
 
+    @Size(max = 3_000_000, message = "Profile image is too large")
+    private String profileImageUrl;
+
     public AcceptCandidateInviteRequest() {
     }
 
@@ -36,6 +39,10 @@ public class AcceptCandidateInviteRequest {
         return password;
     }
 
+    public String getProfileImageUrl() {
+        return profileImageUrl;
+    }
+
     public void setToken(String token) {
         this.token = token;
     }
@@ -46,5 +53,9 @@ public class AcceptCandidateInviteRequest {
 
     public void setPassword(String password) {
         this.password = password;
+    }
+
+    public void setProfileImageUrl(String profileImageUrl) {
+        this.profileImageUrl = profileImageUrl;
     }
 }

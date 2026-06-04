@@ -3,9 +3,12 @@ package app.SkillSync.service;
 import app.SkillSync.dto.AuthResponse;
 import app.SkillSync.dto.ChangePasswordRequest;
 import app.SkillSync.dto.UpdateProfileRequest;
+import app.SkillSync.model.Organization;
 import app.SkillSync.model.User;
+import app.SkillSync.repository.OrganizationRepository;
 import app.SkillSync.repository.UserRepository;
 import app.SkillSync.security.AuthCookieService;
+import app.SkillSync.util.ImageValueValidator;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -14,15 +17,18 @@ import org.springframework.stereotype.Service;
 public class ProfileService {
 
     private final UserRepository userRepository;
+    private final OrganizationRepository organizationRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthCookieService authCookieService;
 
     public ProfileService(
             UserRepository userRepository,
+            OrganizationRepository organizationRepository,
             PasswordEncoder passwordEncoder,
             AuthCookieService authCookieService
     ) {
         this.userRepository = userRepository;
+        this.organizationRepository = organizationRepository;
         this.passwordEncoder = passwordEncoder;
         this.authCookieService = authCookieService;
     }
@@ -39,6 +45,20 @@ public class ProfileService {
         User user = getCurrentUser(authentication);
 
         user.setFullName(request.getFullName().trim());
+        user.setProfileImageUrl(ImageValueValidator.normalizeOptionalImageValue(
+                request.getProfileImageUrl(),
+                "Profile image"
+        ));
+
+        if (canUpdateOrganizationLogo(user)) {
+            Organization organization = organizationRepository.findById(user.getOrganizationId())
+                    .orElseThrow(() -> new IllegalArgumentException("Organization not found."));
+            organization.setLogoUrl(ImageValueValidator.normalizeOptionalImageValue(
+                    request.getOrganizationLogoUrl(),
+                    "Organization image"
+            ));
+            organizationRepository.save(organization);
+        }
 
         User savedUser = userRepository.save(user);
 
@@ -82,6 +102,8 @@ public class ProfileService {
                 user.getEmail(),
                 user.getRole(),
                 user.getOrganizationId(),
+                user.getProfileImageUrl(),
+                resolveOrganizationLogoUrl(user),
                 requiresOrganizationSetup(user)
         );
     }
@@ -92,4 +114,23 @@ public class ProfileService {
                 && user.getRole().isOrganizationAdmin()
                 && (user.getOrganizationId() == null || user.getOrganizationId().isBlank());
     }
+
+    private boolean canUpdateOrganizationLogo(User user) {
+        return user != null
+                && user.getRole() != null
+                && user.getRole().isOrganizationStaff()
+                && user.getOrganizationId() != null
+                && !user.getOrganizationId().isBlank();
+    }
+
+    private String resolveOrganizationLogoUrl(User user) {
+        if (!canUpdateOrganizationLogo(user)) {
+            return null;
+        }
+
+        return organizationRepository.findById(user.getOrganizationId())
+                .map(Organization::getLogoUrl)
+                .orElse(null);
+    }
+
 }

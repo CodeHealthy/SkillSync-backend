@@ -14,18 +14,12 @@ import app.SkillSync.repository.CandidateRepository;
 import app.SkillSync.repository.ProcessedWebhookEventRepository;
 import app.SkillSync.repository.SubscriptionPlanRepository;
 import app.SkillSync.repository.UserRepository;
-import com.stripe.Stripe;
 import com.stripe.exception.SignatureVerificationException;
-import com.stripe.exception.StripeException;
-import com.stripe.model.Customer;
 import com.stripe.model.Event;
-import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.StripeObject;
 import com.stripe.model.Subscription;
 import com.stripe.model.checkout.Session;
 import com.stripe.net.Webhook;
-import com.stripe.param.CustomerCreateParams;
-import com.stripe.param.checkout.SessionCreateParams;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -43,6 +37,9 @@ import java.util.Optional;
 @Service
 public class BillingService {
 
+    private static final String SUBSCRIPTIONS_UNAVAILABLE_MESSAGE =
+            "Subscriptions are currently unavailable. Please continue using the free workspace while billing is being prepared.";
+
     private final BillingSubscriptionRepository subscriptionRepository;
     private final UserRepository userRepository;
     private final AssessmentRepository assessmentRepository;
@@ -52,17 +49,8 @@ public class BillingService {
     private final AuditLogService auditLogService;
     private final OrganizationAccessService organizationAccessService;
 
-    @Value("${billing.enabled:false}")
-    private boolean billingEnabled;
-
-    @Value("${stripe.secret-key:}")
-    private String stripeSecretKey;
-
     @Value("${stripe.webhook-secret:}")
     private String stripeWebhookSecret;
-
-    @Value("${app.frontend.base-url:http://localhost:3000}")
-    private String frontendBaseUrl;
 
     public BillingService(BillingSubscriptionRepository subscriptionRepository,
                           UserRepository userRepository,
@@ -107,78 +95,15 @@ public class BillingService {
     }
 
     public BillingSessionResponse createCheckoutSession(BillingCheckoutSessionRequest request) {
-        ensureStripeConfigured();
-
-        SubscriptionPlan plan = requirePlan(request.getPlanId());
-        if (Boolean.TRUE.equals(plan.getIsFree())) {
-            throw new IllegalArgumentException("Free plan does not require checkout.");
-        }
-
-        String priceId = plan.getStripePriceId();
-        if (priceId == null || priceId.isBlank()) {
-            throw new IllegalArgumentException("Stripe price is not configured for plan: " + planKey(plan));
-        }
-
-        User user = getCurrentUser();
-        String organizationId = requireOrganizationId(user);
-        BillingSubscription localSubscription = getOrCreateFreeSubscription(organizationId);
-        String customerId = ensureStripeCustomer(localSubscription, user);
-
-        try {
-            SessionCreateParams params = SessionCreateParams.builder()
-                    .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
-                    .setCustomer(customerId)
-                    .setSuccessUrl(defaultIfBlank(request.getSuccessUrl(), frontendBaseUrl + "/admin?billing=success"))
-                    .setCancelUrl(defaultIfBlank(request.getCancelUrl(), frontendBaseUrl + "/pricing?billing=cancelled"))
-                    .putMetadata("organizationId", organizationId)
-                    .putMetadata("planId", planKey(plan))
-                    .addLineItem(SessionCreateParams.LineItem.builder().setPrice(priceId).setQuantity(1L).build())
-                    .build();
-
-            Session session = Session.create(params);
-            auditLogService.record(
-                    user,
-                    "BILLING_CHECKOUT_STARTED",
-                    "SUBSCRIPTION_PLAN",
-                    planKey(plan),
-                    Map.of("planId", planKey(plan))
-            );
-            return new BillingSessionResponse(session.getUrl());
-        } catch (StripeException e) {
-            throw new RuntimeException("Unable to create Stripe checkout session.", e);
-        }
+        throw subscriptionsUnavailable();
     }
 
     public BillingSessionResponse createCustomerPortalSession() {
-        ensureStripeConfigured();
+        throw subscriptionsUnavailable();
+    }
 
-        User user = getCurrentUser();
-        String organizationId = requireOrganizationId(user);
-        BillingSubscription localSubscription = getOrCreateFreeSubscription(organizationId);
-        String customerId = ensureStripeCustomer(localSubscription, user);
-
-        try {
-            com.stripe.param.billingportal.SessionCreateParams params =
-                    com.stripe.param.billingportal.SessionCreateParams.builder()
-                            .setCustomer(customerId)
-                            .setReturnUrl(frontendBaseUrl + "/admin")
-                            .build();
-
-            com.stripe.model.billingportal.Session session =
-                    com.stripe.model.billingportal.Session.create(params);
-
-            auditLogService.record(
-                    user,
-                    "BILLING_PORTAL_OPENED",
-                    "BILLING_SUBSCRIPTION",
-                    localSubscription.getId(),
-                    Map.of("customerConfigured", customerId != null && !customerId.isBlank())
-            );
-
-            return new BillingSessionResponse(session.getUrl());
-        } catch (StripeException e) {
-            throw new RuntimeException("Unable to open Stripe billing portal.", e);
-        }
+    private IllegalArgumentException subscriptionsUnavailable() {
+        return new IllegalArgumentException(SUBSCRIPTIONS_UNAVAILABLE_MESSAGE);
     }
 
     // ===================== Feature Checks =====================
@@ -273,37 +198,6 @@ public class BillingService {
     private Instant monthStart() { return LocalDate.now(ZoneOffset.UTC).withDayOfMonth(1).atStartOfDay().toInstant(ZoneOffset.UTC); }
 
     private Instant monthEnd() { return monthStart().atZone(ZoneOffset.UTC).plusMonths(1).toInstant(); }
-
-    private String defaultIfBlank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
-
-    // ===================== Stripe Helpers =====================
-
-    private void ensureStripeConfigured() {
-        if (!billingEnabled) throw new IllegalArgumentException("Billing not enabled.");
-        if (stripeSecretKey == null || stripeSecretKey.isBlank()) throw new IllegalArgumentException("Stripe secret key not configured.");
-        Stripe.apiKey = stripeSecretKey;
-    }
-
-    private String ensureStripeCustomer(BillingSubscription sub, User user) {
-        if (sub.getStripeCustomerId() != null && !sub.getStripeCustomerId().isBlank()) return sub.getStripeCustomerId();
-
-        try {
-            CustomerCreateParams params = CustomerCreateParams.builder()
-                    .setEmail(user.getEmail())
-                    .setName(user.getFullName())
-                    .putMetadata("organizationId", sub.getOrganizationId())
-                    .build();
-
-            Customer customer = Customer.create(params);
-            sub.setStripeCustomerId(customer.getId());
-            sub.setUpdatedAt(Instant.now());
-            subscriptionRepository.save(sub);
-
-            return customer.getId();
-        } catch (StripeException e) {
-            throw new RuntimeException("Unable to create Stripe customer.", e);
-        }
-    }
 
     // ===================== Webhook Handling =====================
 

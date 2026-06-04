@@ -22,6 +22,7 @@ import app.SkillSync.repository.CandidateRepository;
 import app.SkillSync.repository.OrganizationRepository;
 import app.SkillSync.repository.UserRepository;
 import app.SkillSync.security.AuthCookieService;
+import app.SkillSync.util.ImageValueValidator;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationServiceException;
@@ -99,6 +100,10 @@ public class AuthService {
         user.setEmail(normalizedEmail);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRole(role);
+        user.setProfileImageUrl(ImageValueValidator.normalizeOptionalImageValue(
+                request.getProfileImageUrl(),
+                "Profile image"
+        ));
         user.setCreatedAt(Instant.now());
         user.setEmailVerified(false);
         user.setEmailVerifiedAt(null);
@@ -113,6 +118,10 @@ public class AuthService {
 
             Organization organization = new Organization();
             organization.setName(organizationName);
+            organization.setLogoUrl(ImageValueValidator.normalizeOptionalImageValue(
+                    request.getOrganizationLogoUrl(),
+                    "Organization image"
+            ));
             organization.setCreatedAt(Instant.now());
 
             Organization savedOrganization = organizationRepository.save(organization);
@@ -326,10 +335,18 @@ public class AuthService {
 
         Organization organization = new Organization();
         organization.setName(organizationName);
+        organization.setLogoUrl(ImageValueValidator.normalizeOptionalImageValue(
+                request.getOrganizationLogoUrl(),
+                "Organization image"
+        ));
         organization.setCreatedAt(Instant.now());
         Organization savedOrganization = organizationRepository.save(organization);
 
         user.setOrganizationId(savedOrganization.getId());
+        user.setProfileImageUrl(ImageValueValidator.normalizeOptionalImageValue(
+                request.getProfileImageUrl(),
+                "Profile image"
+        ));
         User savedUser = userRepository.save(user);
 
         auditLogService.recordForOrganization(
@@ -359,7 +376,8 @@ public class AuthService {
                 candidate.getId(),
                 candidate.getName(),
                 candidate.getEmail(),
-                organization.getName()
+                organization.getName(),
+                organization.getLogoUrl()
         );
     }
 
@@ -384,6 +402,10 @@ public class AuthService {
         user.setEmail(normalizedEmail);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRole(Role.CANDIDATE);
+        user.setProfileImageUrl(ImageValueValidator.normalizeOptionalImageValue(
+                request.getProfileImageUrl(),
+                "Profile image"
+        ));
         user.setCreatedAt(Instant.now());
         user.setEmailVerified(true);
         user.setEmailVerifiedAt(Instant.now());
@@ -426,6 +448,7 @@ public class AuthService {
                 ),
                 token.getEmail(),
                 organization.getName(),
+                organization.getLogoUrl(),
                 token.getInvitedRole() != null ? token.getInvitedRole() : Role.RECRUITER
         );
     }
@@ -452,6 +475,10 @@ public class AuthService {
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRole(token.getInvitedRole() != null ? token.getInvitedRole() : Role.RECRUITER);
         user.setOrganizationId(organization.getId());
+        user.setProfileImageUrl(ImageValueValidator.normalizeOptionalImageValue(
+                request.getProfileImageUrl(),
+                "Profile image"
+        ));
         user.setCreatedAt(Instant.now());
         user.setEmailVerified(true);
         user.setEmailVerifiedAt(Instant.now());
@@ -558,8 +585,22 @@ public class AuthService {
                 user.getEmail(),
                 user.getRole(),
                 user.getOrganizationId(),
+                user.getProfileImageUrl(),
+                resolveOrganizationLogoUrl(user),
                 requiresOrganizationSetup(user)
         );
+    }
+
+    private String resolveOrganizationLogoUrl(User user) {
+        if (user == null
+                || user.getOrganizationId() == null
+                || user.getOrganizationId().isBlank()) {
+            return null;
+        }
+
+        return organizationRepository.findById(user.getOrganizationId())
+                .map(Organization::getLogoUrl)
+                .orElse(null);
     }
 
     private User getCurrentUser(Authentication authentication) {

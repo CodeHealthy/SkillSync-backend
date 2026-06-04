@@ -7,15 +7,23 @@ public class TeamInvitePreviewResponse {
     private String fullName;
     private String email;
     private String organizationName;
+    private String organizationLogoUrl;
     private Role role;
 
     public TeamInvitePreviewResponse() {
     }
 
-    public TeamInvitePreviewResponse(String fullName, String email, String organizationName, Role role) {
+    public TeamInvitePreviewResponse(
+            String fullName,
+            String email,
+            String organizationName,
+            String organizationLogoUrl,
+            Role role
+    ) {
         this.fullName = fullName;
         this.email = email;
         this.organizationName = organizationName;
+        this.organizationLogoUrl = organizationLogoUrl;
         this.role = role;
     }
 
@@ -29,6 +37,10 @@ public class TeamInvitePreviewResponse {
 
     public String getOrganizationName() {
         return organizationName;
+    }
+
+    public String getOrganizationLogoUrl() {
+        return organizationLogoUrl;
     }
 
     public Role getRole() {

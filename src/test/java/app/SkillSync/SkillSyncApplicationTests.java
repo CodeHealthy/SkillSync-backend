@@ -2,6 +2,7 @@ package app.SkillSync;
 
 import app.SkillSync.repository.AssessmentAssignmentRepository;
 import app.SkillSync.repository.AssessmentRepository;
+import app.SkillSync.repository.AssessmentTemplateRepository;
 import app.SkillSync.repository.AuditLogRepository;
 import app.SkillSync.repository.BillingSubscriptionRepository;
 import app.SkillSync.repository.CandidateRepository;
@@ -31,6 +32,9 @@ class SkillSyncApplicationTests {
 
     @MockitoBean
     private AssessmentRepository assessmentRepository;
+
+    @MockitoBean
+    private AssessmentTemplateRepository assessmentTemplateRepository;
 
     @MockitoBean
     private AuditLogRepository auditLogRepository;
